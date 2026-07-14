@@ -15,6 +15,7 @@ from .stats_tests import (
     distance_correlation,
     fdr_adjust,
     granger_causality,
+    ljung_box,
     mutual_information,
     percentile_effect,
     scan_transforms,
@@ -36,6 +37,7 @@ class AnalysisResult:
     max_lag: int = 14
     windows: list[int] = field(default_factory=lambda: list(DEFAULT_WINDOWS))
     alpha: float = 0.05
+    target_ljungbox: dict | None = None  # estrutura temporal do alvo
 
 
 def run_analysis(
@@ -49,14 +51,39 @@ def run_analysis(
     sheet: int | str = 0,
     verbose: bool = True,
 ) -> AnalysisResult:
-    """Executa a análise completa e devolve a estrutura de resultados."""
+    """Executa a análise completa a partir de um arquivo."""
+    df, diag = load_table(path, target=target, date_col=date_col, sep=sep, sheet=sheet)
+    return analyze_dataframe(
+        df, target, diagnostics=diag, max_lag=max_lag, windows=windows,
+        alpha=alpha, verbose=verbose,
+    )
+
+
+def analyze_dataframe(
+    df: pd.DataFrame,
+    target: str,
+    diagnostics: LoadDiagnostics | None = None,
+    max_lag: int = 14,
+    windows: list[int] | None = None,
+    alpha: float = 0.05,
+    verbose: bool = True,
+) -> AnalysisResult:
+    """Executa a análise sobre um DataFrame já carregado/alinhado.
+
+    Usado pela interface para dados de múltiplas abas (já combinados na
+    grade do alvo) ou após tratamentos escolhidos pelo usuário.
+    """
     windows = windows or list(DEFAULT_WINDOWS)
 
     def log(msg: str) -> None:
         if verbose:
             print(f"  • {msg}")
 
-    df, diag = load_table(path, target=target, date_col=date_col, sep=sep, sheet=sheet)
+    diag = diagnostics or LoadDiagnostics(
+        n_rows_raw=len(df), n_rows_used=len(df),
+        date_start=str(df.index.min()), date_end=str(df.index.max()),
+    )
+    df = df[df[target].notna()]
     params = [c for c in df.columns if c != target]
     if not params:
         raise ValueError("Nenhum parâmetro numérico restou além do alvo.")
@@ -96,8 +123,10 @@ def run_analysis(
             rolling_profile=scan.rolling_profile,
         )
 
-    log("Causalidade de Granger (com ADF/diferenciação)...")
+    log("Estrutura temporal (Ljung-Box) e causalidade de Granger (ADF)...")
+    result.target_ljungbox = ljung_box(y, lags=max_lag)
     for p in params:
+        result.per_param[p]["ljungbox"] = ljung_box(df[p], lags=max_lag)
         result.per_param[p]["granger"] = granger_causality(df[p], y, max_lag)
 
     log("Análise por percentis (alto vs. baixo, quartis)...")

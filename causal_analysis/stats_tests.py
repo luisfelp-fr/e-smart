@@ -253,6 +253,43 @@ def percentile_effect(
     }
 
 
+# --------------------------------------------------- estrutura temporal
+
+def ljung_box(x: pd.Series, lags: int = 10) -> dict | None:
+    """Teste de Ljung-Box: a série tem autocorrelação (estrutura temporal)?
+
+    p pequeno ⇒ o passado da série carrega informação — pré-requisito para
+    efeitos com defasagem (lag) fazerem sentido. Aplicado ao alvo, valida a
+    própria busca por lags; aplicado a um parâmetro, indica persistência
+    (o valor de agora "dura" vários períodos).
+    """
+    from statsmodels.stats.diagnostic import acorr_ljungbox
+
+    xa = pd.Series(x).dropna().astype(float)
+    if len(xa) < 20 or xa.nunique() <= 2:
+        return None
+    m = int(min(lags, len(xa) // 5))
+    if m < 1:
+        return None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            res = acorr_ljungbox(xa, lags=m, return_df=True)
+    except Exception:
+        return None
+    # a estatística LB no lag m testa CONJUNTAMENTE os lags 1..m; o p do
+    # maior lag é a decisão única correta (o mínimo entre lags, sem correção,
+    # dispararia falsos positivos em ruído branco)
+    p_joint = float(res["lb_pvalue"].iloc[-1])
+    best = int(res["lb_pvalue"].idxmin())
+    return {
+        "p_value": p_joint,
+        "best_lag": best,
+        "lags_tested": m,
+        "has_structure": p_joint <= 0.05,
+    }
+
+
 # ------------------------------------------------------------ múltiplos testes
 
 def fdr_adjust(pvalues: dict[str, float], alpha: float = 0.05) -> dict[str, dict]:

@@ -7,13 +7,12 @@ datas; todas as demais colunas são parâmetros numéricos. Formatos brasileiros
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
-EXCEL_EXTS = {".xlsx", ".xls", ".xlsm", ".ods"}
+from shared.parsing import EXCEL_EXTS, parse_dates, read_raw, to_numeric  # noqa: F401
 
 
 @dataclass
@@ -33,38 +32,11 @@ class LoadDiagnostics:
     notes: list[str] = field(default_factory=list)
 
 
-def _read_raw(path: str, sep: str | None, sheet: int | str) -> pd.DataFrame:
-    ext = os.path.splitext(path)[1].lower()
-    if ext in EXCEL_EXTS:
-        return pd.read_excel(path, sheet_name=sheet)
-    # sep=None + engine python deixa o pandas detectar ',', ';' ou tab
-    return pd.read_csv(path, sep=sep, engine="python")
-
-
-def _parse_dates(series: pd.Series) -> tuple[pd.Series, bool]:
-    """Converte a coluna de datas testando dd/mm e mm/dd; fica com o que parseia mais."""
-    as_str = series.astype(str).str.strip()
-    day_first = pd.to_datetime(as_str, errors="coerce", dayfirst=True, format="mixed")
-    month_first = pd.to_datetime(as_str, errors="coerce", dayfirst=False, format="mixed")
-    # em empate (datas não ambíguas) preferimos dd/mm, padrão brasileiro
-    if month_first.notna().sum() > day_first.notna().sum():
-        return month_first, False
-    return day_first, True
-
-
-def _to_numeric(series: pd.Series) -> pd.Series:
-    """Converte para número aceitando decimal com vírgula e milhar com ponto."""
-    direct = pd.to_numeric(series, errors="coerce")
-    if series.dtype.kind in "ifu" or direct.notna().sum() >= series.notna().sum():
-        return direct
-    cleaned = (
-        series.astype(str)
-        .str.strip()
-        .str.replace(".", "", regex=False)  # separador de milhar
-        .str.replace(",", ".", regex=False)  # decimal brasileiro
-    )
-    br = pd.to_numeric(cleaned, errors="coerce")
-    return br if br.notna().sum() > direct.notna().sum() else direct
+# As primitivas de leitura/parsing vivem em shared.parsing e são reusadas
+# pelos demais módulos; os aliases privados preservam a API interna antiga.
+_read_raw = read_raw
+_parse_dates = parse_dates
+_to_numeric = to_numeric
 
 
 def load_table(
