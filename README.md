@@ -75,7 +75,11 @@ PDF** (uma seção por análise, com textos, tabelas e imagens dos gráficos).
 > Para converter os gráficos em imagem dentro do PDF, o `kaleido` (≥ v1)
 > exige um Chrome/Chromium instalado — se não houver, rode
 > `plotly_get_chrome` uma vez. Sem navegador, o PDF sai apenas com textos e
-> tabelas.
+> tabelas. No **Streamlit Community Cloud** isso já está resolvido pelo
+> `packages.txt` (instala o `chromium` via apt).
+
+> **Deploy no Streamlit:** a branch de referência do app é a **`main`** —
+> aponte o Streamlit Cloud para ela; toda melhoria é entregue lá.
 
 ## Uso por linha de comando (motor do Módulo 2)
 
