@@ -39,9 +39,11 @@ processo?"*
      Johnson): índices calculados na escala transformada e valores exibidos
      convertidos de volta à escala original.
    - **Caso 3 — não-normais mesmo transformando**: análise por box-plot e
-     percentis empíricos, PPM contado nos dados e **sugestão de limites
-     realistas** (percentis externos para bilateral; percentil baixo para
-     "quanto maior melhor", percentil alto para "quanto menor melhor").
+     percentis empíricos, PPM contado nos dados e **sugestão de limites de
+     atuação pelos quartis** (Q3 como limite inferior para "quanto maior
+     melhor"; faixa Q2–Q3 para indicadores bilaterais; Q1 como limite
+     superior para "quanto menor melhor"), com os percentis de cauda
+     informados como referência de cobertura.
 
 ## Módulo 2 — O que impacta o alvo
 
@@ -68,7 +70,12 @@ pensado para dados industriais, que raramente são lineares ou normais.
 
 Toda análise tem o botão **"Adicionar ao relatório"**. Na página Relatório é
 possível ver o **preview em HTML** (gráficos interativos) e **baixar em
-Excel** (uma aba por análise, com textos, tabelas e imagens dos gráficos).
+PDF** (uma seção por análise, com textos, tabelas e imagens dos gráficos).
+
+> Para converter os gráficos em imagem dentro do PDF, o `kaleido` (≥ v1)
+> exige um Chrome/Chromium instalado — se não houver, rode
+> `plotly_get_chrome` uma vez. Sem navegador, o PDF sai apenas com textos e
+> tabelas.
 
 ## Uso por linha de comando (motor do Módulo 2)
 
@@ -92,7 +99,7 @@ render_report(resultado, "relatorio.html")
 app/               interface Streamlit (páginas e componentes)
 capability/        motor do Módulo 1 (carta I-AM, normalidade, índices)
 causal_analysis/   motor do Módulo 2 (testes, ML, scores, relatório)
-shared/            leitura de planilhas, multi-aba e exportação Excel
+shared/            leitura de planilhas, multi-aba e exportação PDF
 examples/          dados sintéticos com estrutura causal conhecida
 tests/             testes unitários e de integração
 ```

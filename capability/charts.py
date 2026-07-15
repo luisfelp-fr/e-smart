@@ -39,14 +39,17 @@ _LAYOUT = dict(
     plot_bgcolor=SURFACE,
     font=dict(family="sans-serif", size=13, color=INK_2),
     title_font=dict(size=15, color=INK),
-    margin=dict(l=60, r=30, t=60, b=50),
+    # topo folgado para o título + subtítulo não encostarem na área do gráfico
+    margin=dict(l=70, r=40, t=95, b=65),
     hoverlabel=dict(bgcolor="white", font_size=12),
 )
 
 
 def _base_axes(fig: go.Figure) -> None:
-    fig.update_xaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE)
-    fig.update_yaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE)
+    fig.update_xaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE,
+                     title_standoff=16, automargin=True)
+    fig.update_yaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE,
+                     title_standoff=16, automargin=True)
 
 
 def _fmt(v: float | None, nd: int = 2) -> str:
@@ -166,8 +169,13 @@ def _indices_subtitle(idx: CapabilityIndices | None) -> str:
 
 # ------------------------------------------------------------- carta I-AM
 
-def fig_imr(rep: CapabilityReport) -> go.Figure:
-    """Carta I-AM em dois painéis com causas especiais destacadas."""
+def fig_imr(rep: CapabilityReport, show_spec: bool = False) -> go.Figure:
+    """Carta I-AM em dois painéis com causas especiais destacadas.
+
+    Com ``show_spec=True`` o painel de individuais também desenha os limites
+    de atuação informados pelo usuário (LIE/LSE), permitindo comparar a voz
+    do processo (limites de controle) com a voz do cliente/especificação.
+    """
     imr: IMRResult = rep.imr
     x = rep.series.dropna()
     labels = list(x.index)
@@ -175,7 +183,7 @@ def fig_imr(rep: CapabilityReport) -> go.Figure:
     mr = np.abs(np.diff(vals))
 
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.10,
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.14,
         subplot_titles=("Individuais (valores na ordem de produção)",
                         "Amplitude Móvel (|diferença entre pontos vizinhos|)"),
     )
@@ -196,6 +204,26 @@ def fig_imr(rep: CapabilityReport) -> go.Figure:
                           annotation_text=f"{txt}={_fmt(y, 3)}",
                           annotation_font=dict(size=10, color=INK_2),
                           annotation_position="right")
+
+    if show_spec:
+        # limites de atuação do usuário, anotados à ESQUERDA (dentro da área
+        # do gráfico) para não colidirem com os rótulos LSC/LIC (à direita)
+        for y, txt, pos in ((rep.lsl, "LIE", "bottom left"),
+                            (rep.usl, "LSE", "top left")):
+            if y is not None and np.isfinite(y):
+                fig.add_hline(y=float(y), line_color=RED, line_width=2,
+                              line_dash="dashdot", row=1, col=1,
+                              annotation_text=f"{txt}={_fmt(float(y), 3)}",
+                              annotation_font=dict(size=11, color=RED),
+                              annotation_position=pos)
+        # linhas de add_hline não entram no autorange: garante que dados,
+        # limites de controle e de atuação fiquem todos visíveis
+        candidates = [float(vals.min()), float(vals.max())]
+        candidates += [v for v in (imr.ucl, imr.lcl) if np.isfinite(v)]
+        candidates += [float(v) for v in (rep.lsl, rep.usl) if v is not None]
+        lo, hi = min(candidates), max(candidates)
+        pad = 0.08 * ((hi - lo) or 1.0)
+        fig.update_yaxes(range=[lo - pad, hi + pad], row=1, col=1)
 
     if imr.violations:
         v_labels = [lb for lb in labels if lb in imr.violations]
@@ -243,12 +271,20 @@ def fig_imr(rep: CapabilityReport) -> go.Figure:
     status = ("processo sob controle estatístico" if imr.in_control
               else f"{n_viol} ponto(s) com causa especial")
     layout = dict(_LAYOUT)
-    layout["margin"] = dict(l=60, r=110, t=60, b=50)  # rótulos LSC/LIC à direita
+    # rótulos LSC/LIC à direita; legenda abaixo do segundo painel
+    layout["margin"] = dict(l=70, r=120, t=100, b=95)
+    if show_spec:
+        title = (f"Carta I-AM com limites de atuação — {rep.indicator}"
+                 f"<br><sup>vermelho = atuação informada por você (LIE/LSE) · "
+                 f"cinza = controle (voz do processo) · {status}</sup>")
+    else:
+        title = (f"Carta I-AM — {rep.indicator}<br><sup>{status} · "
+                 f"σ curto prazo = {_fmt(imr.sigma_within, 4)}</sup>")
     fig.update_layout(
-        title=f"Carta I-AM — {rep.indicator}<br><sup>{status} · "
-              f"σ curto prazo = {_fmt(imr.sigma_within, 4)}</sup>",
-        height=560, showlegend=True,
-        legend=dict(orientation="h", y=1.10, x=1, xanchor="right"),
+        title=title,
+        height=620, showlegend=True,
+        legend=dict(orientation="h", y=-0.10, yanchor="top",
+                    x=0, xanchor="left"),
         **layout,
     )
     _base_axes(fig)
@@ -299,6 +335,64 @@ def fig_qqplot(rep: CapabilityReport, transformed: bool = False) -> go.Figure:
     return fig
 
 
+# ------------------------------------------------------- sino da normalidade
+
+def fig_normality_bell(rep: CapabilityReport, transformed: bool = False) -> go.Figure:
+    """Histograma dos dados com a curva de sino (normal teórica) sobreposta.
+
+    Complemento visual do teste de normalidade: quanto mais o histograma
+    acompanha o sino ajustado (mesma média e desvio dos dados), mais a
+    distribuição se aproxima da normal.
+    """
+    if transformed and rep.transformed_series is not None:
+        data = rep.transformed_series.dropna()
+        title_extra = " (dados transformados)"
+        axis_title = f"{rep.indicator} (transformado)"
+        norm = rep.normality_final
+    else:
+        data = rep.series.dropna()
+        title_extra = ""
+        axis_title = rep.indicator
+        norm = rep.normality_raw
+
+    x = data.to_numpy(dtype=float)
+    mu = float(np.mean(x))
+    sd = float(np.std(x, ddof=1)) if len(x) > 1 else np.nan
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=x, histnorm="probability density",
+        marker=dict(color=BLUE, line=dict(color=SURFACE, width=1)),
+        opacity=0.75, name="dados",
+        hovertemplate="faixa: %{x}<br>densidade: %{y:.4f}<extra>dados</extra>",
+    ))
+    if np.isfinite(sd) and sd > 0:
+        gx = np.linspace(min(x.min(), mu - 4 * sd), max(x.max(), mu + 4 * sd), 300)
+        fig.add_trace(go.Scatter(
+            x=gx, y=stats.norm.pdf(gx, mu, sd), mode="lines",
+            line=dict(color=BLUE_DARK, width=2.5), name="sino (normal teórica)",
+            hovertemplate="x: %{x:.4g}<br>densidade: %{y:.4f}"
+                          "<extra>sino (normal teórica)</extra>",
+        ))
+        fig.add_vline(x=mu, line_color=INK_2, line_width=1.2, line_dash="dot",
+                      annotation_text=f"média = {_fmt(mu, 4)}",
+                      annotation_position="top",
+                      annotation_font=dict(size=11, color=INK_2))
+
+    p_txt = _fmt(norm.ad_p, 3) if norm else "—"
+    fig.update_layout(
+        title=(f"Distribuição dos dados vs. curva de sino — "
+               f"{rep.indicator}{title_extra}"
+               f"<br><sup>barras = dados reais · linha escura = normal teórica "
+               f"(média {_fmt(mu, 4)}, desvio {_fmt(sd, 4)}) · "
+               f"Anderson-Darling p = {p_txt}</sup>"),
+        xaxis_title=axis_title, yaxis_title="densidade",
+        showlegend=False, **_LAYOUT,
+    )
+    _base_axes(fig)
+    return fig
+
+
 # ---------------------------------------------------------------- box-plot
 
 def fig_boxplot(rep: CapabilityReport) -> go.Figure:
@@ -319,15 +413,16 @@ def fig_boxplot(rep: CapabilityReport) -> go.Figure:
     if rep.usl is not None:
         _spec_line(fig, rep.usl, "LSE (atual)")
 
-    # limites sugeridos anotados EMBAIXO para não colidir com os atuais (topo)
+    # limites sugeridos anotados EMBAIXO (dentro do gráfico, divergindo para
+    # os lados) para não colidir com os atuais (topo) nem com o eixo x
     sug: SuggestedLimits | None = rep.suggested
     if sug is not None:
         if sug.suggested_lsl is not None:
             _spec_line(fig, sug.suggested_lsl, "LIE sugerido", color=GREEN,
-                       dash="dash", position="bottom")
+                       dash="dash", position="bottom left")
         if sug.suggested_usl is not None:
             _spec_line(fig, sug.suggested_usl, "LSE sugerido", color=GREEN,
-                       dash="dash", position="bottom")
+                       dash="dash", position="bottom right")
 
     sub = ""
     if box is not None and box.n:
@@ -338,7 +433,7 @@ def fig_boxplot(rep: CapabilityReport) -> go.Figure:
     fig.update_layout(
         title=f"Box-plot — {rep.indicator}<br><sup>{sub}</sup>",
         xaxis_title=rep.indicator, yaxis=dict(showticklabels=False),
-        showlegend=False, height=380, **_LAYOUT,
+        showlegend=False, height=410, **_LAYOUT,
     )
     _base_axes(fig)
     return fig

@@ -103,20 +103,23 @@ def test_caso3_bimodal_vai_para_percentis():
     assert rep.suggested is not None
 
 
-def test_sugestao_limites_direcao_correta():
+def test_sugestao_limites_regra_quartis():
     x = _serie(RNG.normal(100, 5, 1000))
-    # quanto maior melhor (só LIE): sugestão deve ser percentil BAIXO
+    q1, q2, q3 = np.quantile(x, [0.25, 0.5, 0.75])
+    # quanto maior melhor (só LIE): meta de atuação = Q3
     s_inf = suggested_limits(x, lsl=90.0, usl=None)
-    assert s_inf.suggested_lsl < np.median(x)
+    assert abs(s_inf.suggested_lsl - q3) < 1e-9
     assert s_inf.suggested_usl is None
-    # quanto menor melhor (só LSE): sugestão deve ser percentil ALTO
+    assert s_inf.practical_lsl < q2  # referência de cobertura na cauda baixa
+    # quanto menor melhor (só LSE): espelho da regra => Q1
     s_sup = suggested_limits(x, lsl=None, usl=110.0)
-    assert s_sup.suggested_usl > np.median(x)
+    assert abs(s_sup.suggested_usl - q1) < 1e-9
     assert s_sup.suggested_lsl is None
-    # bilateral: faixa externa cobre ~99,7%
+    # bilateral: faixa da mediana (Q2) ao Q3
     s_bi = suggested_limits(x, lsl=90.0, usl=110.0)
-    assert s_bi.suggested_lsl < s_bi.suggested_usl
-    assert s_bi.coverage_pct > 99.0
+    assert abs(s_bi.suggested_lsl - q2) < 1e-9
+    assert abs(s_bi.suggested_usl - q3) < 1e-9
+    assert 20.0 < s_bi.coverage_pct < 30.0  # Q2..Q3 cobre ~25% dos dados
 
 
 # ------------------------------------------------------- carta de controle

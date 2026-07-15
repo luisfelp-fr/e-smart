@@ -2,7 +2,7 @@
 
 Módulo 1: análise de capabilidade (o indicador atende aos limites?).
 Módulo 2: análise de influência (o que impacta a variável alvo?).
-Relatório: reúna análises marcadas, visualize e baixe em Excel.
+Relatório: reúna análises marcadas, visualize e baixe em PDF.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def main() -> None:
                 "3. **Módulo 2**: escolha a variável alvo para descobrir "
                 "quais indicadores mais a impactam.\n"
                 "4. Em cada análise, clique em **Adicionar ao relatório** e "
-                "baixe tudo em Excel na página Relatório."
+                "baixe tudo em PDF na página Relatório."
             )
 
     if page.startswith("📊"):

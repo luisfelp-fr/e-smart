@@ -3,19 +3,23 @@
 Quando nem os dados brutos nem transformações atingem normalidade, a
 capabilidade clássica (que assume o sino) deixa de valer. Este módulo
 descreve a distribuição pelos quartis/percentis empíricos e sugere limites
-de atuação realistas.
+de atuação.
 
-Racional da sugestão (correção importante): quartis descrevem o CENTRO da
-distribuição; um limite garantível vive na CAUDA do lado restringido.
+Racional da sugestão (regra definida pelo usuário do processo): os limites
+de atuação são ancorados nos QUARTIS do box-plot — metas de operação
+baseadas no comportamento real do indicador, não pisos/tetos garantíveis.
 
-- bilateral: a faixa típica de operação é Q1–Q3 (50% central), mas um limite
-  que o processo consiga cumprir ~99,7% do tempo são os percentis externos
-  P0,135 e P99,865 (análogo não-paramétrico de µ ± 3σ);
-- só limite inferior ("quanto maior, melhor"): o risco é a cauda BAIXA — o
-  piso garantível é um percentil baixo (P0,135; na prática P1/P5). Q3 como
-  piso reprovaria ~75% da produção; se desejado, Q3 é apenas meta;
-- só limite superior ("quanto menor, melhor"): o teto garantível é um
-  percentil ALTO (P99,865; na prática P95/P99).
+- só limite inferior ("quanto maior, melhor"): LIE sugerido = Q3 — operar
+  acima do terceiro quartil, isto é, entre os 25% melhores valores
+  históricos;
+- bilateral: faixa sugerida de Q2 (mediana) a Q3 — a metade superior do
+  comportamento típico do processo;
+- só limite superior ("quanto menor, melhor"): LSE sugerido = Q1 (espelho
+  da regra do limite inferior).
+
+Os percentis de cauda (P0,135/P99,865 e P5/P95) continuam informados no
+texto como referência de cobertura: são os valores que o processo ATUAL já
+cumpre em ~99,7% / 95% do tempo.
 """
 
 from __future__ import annotations
@@ -95,40 +99,43 @@ def suggested_limits(
 
     if lsl is not None and usl is not None:
         res.sided = "bilateral"
-        res.suggested_lsl, res.suggested_usl = box.p0135, box.p99865
+        res.suggested_lsl, res.suggested_usl = box.median, box.q3
         res.practical_lsl, res.practical_usl = box.p5, box.p95
         res.rationale = (
-            "A faixa típica de operação (50% central dos dados) vai de "
-            f"Q1 = {box.q1:.4g} a Q3 = {box.q3:.4g} (mediana {box.median:.4g}). "
-            "Para limites que o processo cumpra ~99,7% do tempo, use os "
-            f"percentis externos P0,135 = {box.p0135:.4g} e "
-            f"P99,865 = {box.p99865:.4g}; uma alternativa prática (95% de "
-            f"cobertura) é P5 = {box.p5:.4g} a P95 = {box.p95:.4g}."
+            "Para indicador com os dois limites, a faixa de atuação sugerida "
+            f"vai da mediana (Q2) = {box.median:.4g} ao terceiro quartil "
+            f"(Q3) = {box.q3:.4g} — a metade superior do comportamento típico "
+            "do processo (meta de operação, não piso/teto garantido). "
+            "Como referência de cobertura do processo atual: "
+            f"P5 = {box.p5:.4g} a P95 = {box.p95:.4g} contém 95% dos dados, e "
+            f"P0,135 = {box.p0135:.4g} a P99,865 = {box.p99865:.4g}, ~99,7%."
         )
     elif lsl is not None:
-        # só limite inferior => quanto maior, melhor => risco na cauda baixa
+        # só limite inferior => quanto maior, melhor => atuação = Q3
         res.sided = "inferior"
-        res.suggested_lsl = box.p0135
+        res.suggested_lsl = box.q3
         res.practical_lsl = box.p5
         res.rationale = (
-            "Com limite apenas inferior (quanto maior, melhor), o risco está "
-            "na cauda baixa: o piso que o processo consegue garantir é um "
-            f"percentil baixo — P0,135 = {box.p0135:.4g} (~99,9% acima) ou, "
-            f"na prática, P5 = {box.p5:.4g} (95% acima). "
-            f"Q3 = {box.q3:.4g} serviria apenas como meta de melhoria "
-            "(75% da produção ficaria abaixo dele)."
+            "Com limite apenas inferior (quanto maior, melhor), o limite de "
+            f"atuação sugerido é o terceiro quartil Q3 = {box.q3:.4g}: operar "
+            "acima dele significa ficar entre os 25% melhores valores "
+            "históricos do indicador (meta de operação). Como referência de "
+            f"cobertura, o processo atual já garante P5 = {box.p5:.4g} "
+            f"(95% dos dados acima) e P0,135 = {box.p0135:.4g} (~99,9% acima)."
         )
     elif usl is not None:
-        # só limite superior => quanto menor, melhor => risco na cauda alta
+        # só limite superior => quanto menor, melhor => atuação = Q1 (espelho)
         res.sided = "superior"
-        res.suggested_usl = box.p99865
+        res.suggested_usl = box.q1
         res.practical_usl = box.p95
         res.rationale = (
-            "Com limite apenas superior (quanto menor, melhor), o risco está "
-            "na cauda alta: o teto que o processo consegue garantir é um "
-            f"percentil alto — P99,865 = {box.p99865:.4g} (~99,9% abaixo) ou, "
-            f"na prática, P95 = {box.p95:.4g} (95% abaixo). "
-            f"Q1 = {box.q1:.4g} serviria apenas como meta de melhoria."
+            "Com limite apenas superior (quanto menor, melhor), o limite de "
+            f"atuação sugerido é o primeiro quartil Q1 = {box.q1:.4g} "
+            "(espelho da regra do limite inferior): operar abaixo dele "
+            "significa ficar entre os 25% melhores valores históricos (meta "
+            "de operação). Como referência de cobertura, o processo atual já "
+            f"garante P95 = {box.p95:.4g} (95% dos dados abaixo) e "
+            f"P99,865 = {box.p99865:.4g} (~99,9% abaixo)."
         )
     else:
         res.notes.append("Nenhum limite informado — nada a sugerir.")

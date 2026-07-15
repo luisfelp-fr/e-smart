@@ -1,4 +1,4 @@
-"""Página do relatório: coleta de análises marcadas, preview HTML e download."""
+"""Página do relatório: coleta de análises marcadas, preview HTML e PDF."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import datetime as dt
 
 import streamlit as st
 
-from shared.excel_export import build_excel
+from shared.pdf_export import build_pdf
 
 _CSS = """
 body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -63,7 +63,7 @@ def render_report_page() -> None:
     st.header("📄 Relatório")
     st.caption(
         "Reúna aqui as análises marcadas com **Adicionar ao relatório** nas "
-        "outras páginas. Visualize o resultado e baixe em Excel."
+        "outras páginas. Visualize o resultado e baixe em PDF."
     )
     items: list[dict] = st.session_state.get("report_items", [])
     if not items:
@@ -87,17 +87,23 @@ def render_report_page() -> None:
     if c1.button("👁️ Gerar preview HTML", type="primary"):
         st.session_state["report_preview"] = build_html(items)
     with c2:
-        with st.spinner(""):
-            xlsx = build_excel(items)
-        st.download_button(
-            "⬇️ Baixar em Excel (.xlsx)", data=xlsx,
-            file_name="relatorio_indicadores.xlsx",
-            mime="application/vnd.openxmlformats-officedocument"
-                 ".spreadsheetml.sheet",
-        )
+        # o PDF renderiza cada gráfico em PNG — gera sob demanda, e o
+        # resultado fica em cache até a lista de análises mudar
+        signature = "|".join(it["id"] for it in items)
+        if st.button("🖨️ Gerar PDF"):
+            with st.spinner("Gerando PDF (renderizando os gráficos)..."):
+                st.session_state["report_pdf"] = (signature, build_pdf(items))
+        cached = st.session_state.get("report_pdf")
+        if cached and cached[0] == signature:
+            st.download_button(
+                "⬇️ Baixar em PDF (.pdf)", data=cached[1],
+                file_name="relatorio_indicadores.pdf",
+                mime="application/pdf",
+            )
     if c3.button("Limpar relatório"):
         st.session_state["report_items"] = []
         st.session_state.pop("report_preview", None)
+        st.session_state.pop("report_pdf", None)
         st.rerun()
 
     html = st.session_state.get("report_preview")

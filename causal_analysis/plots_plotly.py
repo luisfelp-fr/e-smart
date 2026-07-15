@@ -31,14 +31,17 @@ _LAYOUT = dict(
     plot_bgcolor=SURFACE,
     font=dict(family="sans-serif", size=13, color=INK_2),
     title_font=dict(size=15, color=INK),
-    margin=dict(l=60, r=30, t=60, b=50),
+    # topo folgado para o título + subtítulo não encostarem na área do gráfico
+    margin=dict(l=70, r=40, t=95, b=65),
     hoverlabel=dict(bgcolor="white", font_size=12),
 )
 
 
 def _base_axes(fig: go.Figure) -> None:
-    fig.update_xaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE)
-    fig.update_yaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE)
+    fig.update_xaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE,
+                     title_standoff=16, automargin=True)
+    fig.update_yaxes(gridcolor=GRID, zerolinecolor=BASELINE, linecolor=BASELINE,
+                     title_standoff=16, automargin=True)
 
 
 def fig_ranking(scores: pd.DataFrame, top: int = 15) -> go.Figure:
@@ -64,11 +67,13 @@ def fig_ranking(scores: pd.DataFrame, top: int = 15) -> go.Figure:
               "<br><sup>azul = efeito positivo · vermelho = negativo · "
               "cinza = não-monotônico/indefinido</sup>",
         xaxis=dict(title="Score de evidência (0–100)", range=[0, 108]),
-        height=max(300, 36 * len(data) + 120),
+        height=max(320, 36 * len(data) + 150),
         showlegend=False, **_LAYOUT,
     )
     _base_axes(fig)
-    fig.update_yaxes(gridcolor=SURFACE)
+    # nomes de indicadores podem ser longos: automargin evita corte e o
+    # sufixo dá um respiro entre o rótulo e as barras
+    fig.update_yaxes(gridcolor=SURFACE, automargin=True, ticksuffix="  ")
     return fig
 
 
@@ -91,9 +96,10 @@ def fig_corr_heatmap(df: pd.DataFrame, target: str, max_cols: int = 25) -> go.Fi
     n = len(labels)
     fig.update_layout(
         title=f"Correlação de Spearman entre indicadores e alvo ({target})",
-        height=max(420, 32 * n + 160), **_LAYOUT,
+        height=max(440, 32 * n + 180), **_LAYOUT,
     )
-    fig.update_yaxes(autorange="reversed")
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(autorange="reversed", automargin=True)
     return fig
 
 
@@ -115,11 +121,13 @@ def fig_lag_profile(name: str, lag_profile: dict[int, float],
     ), row=1, col=1)
     if vals:
         i = int(np.nanargmax(np.abs(vals)))
+        # rótulo abaixo do ponto quando o pico está perto do topo do eixo
+        text_pos = "bottom center" if vals[i] > 0.6 else "top center"
         fig.add_trace(go.Scatter(
             x=[lags[i]], y=[vals[i]], mode="markers+text",
             marker=dict(size=13, color="rgba(0,0,0,0)",
                         line=dict(width=2, color=INK)),
-            text=[f"lag {lags[i]}: ρ={vals[i]:.2f}"], textposition="top center",
+            text=[f"lag {lags[i]}: ρ={vals[i]:.2f}"], textposition=text_pos,
             textfont=dict(size=11, color=INK_2),
             hoverinfo="skip", showlegend=False,
         ), row=1, col=1)
@@ -138,7 +146,7 @@ def fig_lag_profile(name: str, lag_profile: dict[int, float],
     fig.update_xaxes(title_text="janela", row=1, col=2)
     fig.update_layout(
         title=f"{name} — quando o efeito aparece",
-        height=340, **_LAYOUT,
+        height=380, **_LAYOUT,
     )
     _base_axes(fig)
     return fig
@@ -171,7 +179,7 @@ def fig_scatter(x: pd.Series, y: pd.Series, name: str, target: str,
         title=f"Forma da relação — {name} vs. {target}"
               f"<br><sup>{transform_label}</sup>",
         xaxis_title=f"{name} ({transform_label})", yaxis_title=target,
-        height=380, showlegend=False, **_LAYOUT,
+        height=410, showlegend=False, **_LAYOUT,
     )
     _base_axes(fig)
     return fig
@@ -200,7 +208,7 @@ def fig_quartile_box(x: pd.Series, y: pd.Series, name: str, target: str) -> go.F
               "<br><sup>cada caixa mostra a distribuição do alvo quando o "
               "indicador está naquela faixa de valores</sup>",
         yaxis_title=target, xaxis_title=f"quartis de {name}",
-        height=380, showlegend=False, **_LAYOUT,
+        height=410, showlegend=False, **_LAYOUT,
     )
     _base_axes(fig)
     return fig
@@ -230,8 +238,9 @@ def fig_timeseries_overlay(y: pd.Series, x: pd.Series,
               "<br><sup>séries padronizadas (z-score) para caberem no mesmo "
               "eixo — procure movimentos conjuntos ou defasados</sup>",
         yaxis_title="z-score (padronizado)",
-        height=340,
-        legend=dict(orientation="h", y=1.12, x=1, xanchor="right"),
+        height=380,
+        legend=dict(orientation="h", y=1.04, yanchor="bottom",
+                    x=1, xanchor="right"),
         **_LAYOUT,
     )
     _base_axes(fig)

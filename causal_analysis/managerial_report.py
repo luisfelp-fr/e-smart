@@ -57,18 +57,72 @@ def _friendly_name(column: str) -> str:
     return f"'{base}' — {desc}"
 
 
-def _lag_phrase(transform_label: str) -> str:
+def _fmt_timedelta_br(td) -> str:
+    """Duração em linguagem natural pt-BR ("12 horas", "3,5 dias")."""
+    secs = float(pd.Timedelta(td).total_seconds())
+    units = [
+        (604800.0, ("semana", "semanas")),
+        (86400.0, ("dia", "dias")),
+        (3600.0, ("hora", "horas")),
+        (60.0, ("minuto", "minutos")),
+        (1.0, ("segundo", "segundos")),
+    ]
+    def fmt(v: float, sing: str, plur: str) -> str:
+        txt = f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+        return f"{txt} {sing if abs(v - 1.0) < 1e-9 else plur}"
+
+    # prefere a maior unidade que expressa a duração sem arredondar
+    # (28 horas fica "28 horas", não "1,2 dias"); senão, aproxima na maior
+    for size, (sing, plur) in units:
+        v = secs / size
+        if 1.0 <= v < 1000.0 and abs(v - round(v, 1)) < 1e-9:
+            return fmt(v, sing, plur)
+    for size, (sing, plur) in units:
+        v = secs / size
+        if v >= 1.0:
+            return fmt(v, sing, plur)
+    return "menos de 1 segundo"
+
+
+def _time_step(index) -> tuple[pd.Timedelta | None, str]:
+    """Passo de tempo típico da série (mediana das diferenças do índice).
+
+    Devolve (None, "") quando os dados não têm coluna de data/hora — nesse
+    caso "1 período" só pode significar "1 linha da planilha".
+    """
+    if isinstance(index, pd.DatetimeIndex) and len(index) >= 3:
+        diffs = pd.Series(index).diff().dropna()
+        if len(diffs):
+            step = diffs.median()
+            if step > pd.Timedelta(0):
+                return step, _fmt_timedelta_br(step)
+    return None, ""
+
+
+def _in_time_units(k_txt: str, step: pd.Timedelta | None) -> str:
+    """Traduz "k períodos" para a escala de tempo dos dados, se conhecida."""
+    if step is None:
+        return ""
+    try:
+        k = int(k_txt)
+    except (TypeError, ValueError):
+        return ""
+    return f" (≈ {_fmt_timedelta_br(step * k)} na escala destes dados)"
+
+
+def _lag_phrase(transform_label: str, step: pd.Timedelta | None = None) -> str:
     if transform_label.startswith("lag"):
         k = transform_label.split()[1]
         return (
-            f"o efeito aparece cerca de {k} período(s) DEPOIS da variação "
-            "(efeito com atraso)"
+            f"o efeito aparece cerca de {k} período(s)"
+            f"{_in_time_units(k, step)} DEPOIS da variação (efeito com atraso)"
         )
     if transform_label.startswith("média móvel"):
         w = transform_label.split()[2]
         return (
-            f"o que importa é o acumulado de ~{w} período(s), não o valor "
-            "instantâneo (efeito de permanência)"
+            f"o que importa é o acumulado de ~{w} período(s)"
+            f"{_in_time_units(w, step)}, não o valor instantâneo "
+            "(efeito de permanência)"
         )
     return "o efeito é imediato (mesmo período)"
 
@@ -81,6 +135,7 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
     if scores is None or scores.empty:
         rep.headline = "Nenhum resultado disponível."
         return rep
+    step, step_txt = _time_step(result.df.index)
 
     relevant = scores[scores["veredito"].str.contains("Culpado")]
     n_rel = len(relevant)
@@ -112,6 +167,18 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
             f"observações. O ranking abaixo ordena os fatores pela força "
             f"conjunta dessas evidências (score 0–100)."
         )
+    # deixa explícito quanto vale "1 período" na escala de tempo do indicador
+    if step_txt:
+        rep.summary += (
+            f" Nestes dados, 1 período corresponde a {step_txt} "
+            "(intervalo típico entre medições do alvo) — os atrasos citados "
+            "abaixo já aparecem traduzidos para essa escala."
+        )
+    else:
+        rep.summary += (
+            " A planilha não tem coluna de data/hora, então 1 período "
+            "equivale a 1 linha da planilha (uma medição)."
+        )
 
     for _, row in scores.head(top).iterrows():
         if "Culpado" not in str(row["veredito"]):
@@ -122,7 +189,7 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         ).format(nome=nome, alvo=f"'{alvo}'")
         frase = (
             f"{direcao.capitalize()}. "
-            f"{_lag_phrase(str(row['melhor_transformacao'])).capitalize()}. "
+            f"{_lag_phrase(str(row['melhor_transformacao']), step).capitalize()}. "
             f"Confiança: {_CONFIDENCE_PHRASES.get(row['confianca'], row['confianca'])} "
             f"(score {row['score']:.0f}/100)."
         )
@@ -159,7 +226,9 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         "não-monotônica": "existe faixa ideal",
         "indefinida": "direção incerta",
     })
-    tab["quando impacta"] = tab["melhor_transformacao"].map(_lag_phrase)
+    tab["quando impacta"] = tab["melhor_transformacao"].map(
+        lambda label: _lag_phrase(str(label), step)
+    )
     rep.ranking_table = tab[[
         "indicador", "o que foi medido", "score", "veredito",
         "como impacta", "quando impacta", "confianca",

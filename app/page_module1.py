@@ -134,7 +134,16 @@ def render_module1(file_path: str | None) -> None:
 
     # ---- etapa 1: carta de controle I-AM ------------------------------
     st.subheader("1️⃣ Estabilidade do processo (carta I-AM)", help=TOOLTIPS["iam"])
-    st.plotly_chart(charts.fig_imr(rep), use_container_width=True)
+    fig_imr_spec = charts.fig_imr(rep, show_spec=True)
+    fig_imr_ctrl = charts.fig_imr(rep)
+    st.plotly_chart(fig_imr_spec, use_container_width=True)
+    st.caption(
+        "Acima: carta I-AM com os **limites de atuação que você informou** "
+        "(LIE/LSE, em vermelho), para comparar o processo com a "
+        "especificação. Abaixo: a carta de controle clássica, apenas com os "
+        "limites calculados a partir da variação do próprio processo."
+    )
+    st.plotly_chart(fig_imr_ctrl, use_container_width=True)
     violations = rep.imr.violations if rep.imr else {}
     # só eventos discretos (R1: além de 3σ) são candidatos a exclusão; regras
     # de sequência (R2/R3/R5/R6) indicam instabilidade sistemática, que não
@@ -204,9 +213,13 @@ def render_module1(file_path: str | None) -> None:
             "Johnson). A análise usa os percentis reais dos dados (box-plot).",
             icon="📦",
         )
+    fig_bell = charts.fig_normality_bell(rep)
+    st.plotly_chart(fig_bell, use_container_width=True)
     with st.expander("Ver gráfico de probabilidade normal (QQ)"):
         st.plotly_chart(charts.fig_qqplot(rep), use_container_width=True)
         if rep.case == 2:
+            st.plotly_chart(charts.fig_normality_bell(rep, transformed=True),
+                            use_container_width=True)
             st.plotly_chart(charts.fig_qqplot(rep, transformed=True),
                             use_container_width=True)
 
@@ -216,8 +229,9 @@ def render_module1(file_path: str | None) -> None:
     idx = rep.indices
     figures: dict = {}
     if rep.case in (1, 2):
-        st.plotly_chart(charts.fig_capability_hist(rep), use_container_width=True)
-        figures["histograma"] = charts.fig_capability_hist(rep)
+        fig_hist = charts.fig_capability_hist(rep)
+        st.plotly_chart(fig_hist, use_container_width=True)
+        figures["histograma"] = fig_hist
         pairs = [
             ("Cp", fmt_br(idx.cp), TOOLTIPS["cp"]),
             ("Cpk", fmt_br(idx.cpk), TOOLTIPS["cpk"]),
@@ -236,8 +250,9 @@ def render_module1(file_path: str | None) -> None:
         if np.isfinite(idx.cp) and np.isfinite(idx.cpk) and idx.cp > idx.cpk * 1.3:
             st.info(TOOLTIPS["descentrado"], icon="🎯")
     else:
-        st.plotly_chart(charts.fig_boxplot(rep), use_container_width=True)
-        figures["boxplot"] = charts.fig_boxplot(rep)
+        fig_box = charts.fig_boxplot(rep)
+        st.plotly_chart(fig_box, use_container_width=True)
+        figures["boxplot"] = fig_box
         pairs = [
             ("Ppk (percentis)", fmt_br(idx.ppk), TOOLTIPS["percentis"]),
             ("PPM fora (contado)", fmt_br(idx.ppm_total, 0), TOOLTIPS["ppm"]),
@@ -273,7 +288,9 @@ def render_module1(file_path: str | None) -> None:
                   fmt_br(idx.pp), fmt_br(idx.ppk), fmt_br(idx.ppm_total, 0),
                   fmt_br(idx.obs_pct_out, 2), idx.verdict],
     }).set_index("métrica")
-    figures["carta I-AM"] = charts.fig_imr(rep)
+    figures["carta I-AM (limites de atuação)"] = fig_imr_spec
+    figures["carta I-AM (controle)"] = fig_imr_ctrl
+    figures["distribuição vs. sino"] = fig_bell
     add_to_report_button(
         {
             "id": item_id,
