@@ -179,6 +179,17 @@ def test_loader_com_data_brasileira(tmp_path):
     assert str(df.index[0].date()) == "2024-06-01"  # dd/mm
 
 
+def test_loader_ods(tmp_path):
+    # o uploader aceita .ods — a leitura precisa funcionar (engine odfpy)
+    p = tmp_path / "dados.ods"
+    pd.DataFrame({"data": ["01/06/2024", "02/06/2024", "03/06/2024", "04/06/2024"],
+                  "vazao": [10.5, 11.2, 9.8, 12.1]}).to_excel(
+        p, engine="odf", index=False)
+    df, diag = load_indicator_table(str(p))
+    assert diag.has_dates
+    assert df["vazao"].notna().sum() == 4
+
+
 def test_faltantes_interpolacao_e_mediana():
     vals = [1.0, 2.0, np.nan, 4.0, 5.0, np.nan, np.nan, np.nan, np.nan, 10.0]
     x = _serie(vals)

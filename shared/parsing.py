@@ -13,12 +13,29 @@ import pandas as pd
 
 EXCEL_EXTS = {".xlsx", ".xls", ".xlsm", ".ods"}
 
+# leitor que o pandas usa por extensão — para a mensagem de erro amigável
+_ENGINE_BY_EXT = {".xls": "xlrd", ".ods": "odfpy"}
+
+
+def _read_excel(path: str, sheet_name):
+    """pd.read_excel com erro claro quando falta o leitor do formato."""
+    try:
+        return pd.read_excel(path, sheet_name=sheet_name)
+    except ImportError as e:
+        ext = os.path.splitext(path)[1].lower()
+        pkg = _ENGINE_BY_EXT.get(ext, "openpyxl")
+        raise ValueError(
+            f"Este ambiente não tem o leitor de arquivos {ext} instalado "
+            f"(pacote '{pkg}'). Instale com `pip install {pkg}` ou salve a "
+            "planilha como .xlsx/.csv e envie novamente."
+        ) from e
+
 
 def read_raw(path: str, sep: str | None = None, sheet: int | str = 0) -> pd.DataFrame:
     """Lê CSV ou Excel; para CSV, sep=None deixa o pandas detectar ',', ';' ou tab."""
     ext = os.path.splitext(path)[1].lower()
     if ext in EXCEL_EXTS:
-        return pd.read_excel(path, sheet_name=sheet)
+        return _read_excel(path, sheet_name=sheet)
     return pd.read_csv(path, sep=sep, engine="python")
 
 
@@ -30,7 +47,7 @@ def read_all_sheets(path: str, sep: str | None = None) -> dict[str, pd.DataFrame
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in EXCEL_EXTS:
-        sheets = pd.read_excel(path, sheet_name=None)
+        sheets = _read_excel(path, sheet_name=None)
         return {str(k): v for k, v in sheets.items()}
     name = os.path.splitext(os.path.basename(path))[0]
     return {name: pd.read_csv(path, sep=sep, engine="python")}

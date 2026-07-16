@@ -72,6 +72,44 @@ def infer_step(index: pd.Index) -> pd.Timedelta | float | None:
         return None
 
 
+def fmt_timedelta_br(td) -> str:
+    """Duração em linguagem natural pt-BR ("12 horas", "3,5 dias")."""
+    secs = float(pd.Timedelta(td).total_seconds())
+    units = [
+        (604800.0, ("semana", "semanas")),
+        (86400.0, ("dia", "dias")),
+        (3600.0, ("hora", "horas")),
+        (60.0, ("minuto", "minutos")),
+        (1.0, ("segundo", "segundos")),
+    ]
+
+    def fmt(v: float, sing: str, plur: str) -> str:
+        txt = f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+        return f"{txt} {sing if abs(v - 1.0) < 1e-9 else plur}"
+
+    # prefere a maior unidade que expressa a duração sem arredondar
+    # (28 horas fica "28 horas", não "1,2 dias"); senão, aproxima na maior
+    for size, (sing, plur) in units:
+        v = secs / size
+        if 1.0 <= v < 1000.0 and abs(v - round(v, 1)) < 1e-9:
+            return fmt(v, sing, plur)
+    for size, (sing, plur) in units:
+        v = secs / size
+        if v >= 1.0:
+            return fmt(v, sing, plur)
+    return "menos de 1 segundo"
+
+
+def fmt_step(step) -> str:
+    """Passo do índice em linguagem natural ('4 horas', '2 linhas')."""
+    if step is None:
+        return "desconhecido"
+    if isinstance(step, pd.Timedelta):
+        return fmt_timedelta_br(step)
+    v = f"{float(step):g}".replace(".", ",")
+    return f"{v} linha" if float(step) == 1 else f"{v} linhas"
+
+
 def aggregate_to_grid(
     fine: pd.DataFrame, grid: pd.Index, prefix: str = ""
 ) -> pd.DataFrame:
@@ -156,7 +194,8 @@ def align_sheets(
         if step_s is not None and step_t is not None and step_s < step_t * 0.75:
             agg = aggregate_to_grid(df, grid, prefix=prefix)
             info.sheets[name] = (
-                f"mais fina (passo {step_s}) — agregada em famílias de métricas"
+                f"mais fina (passo {fmt_step(step_s)}) — agregada em famílias "
+                "de métricas"
             )
             combined.append(agg)
         else:
@@ -166,7 +205,8 @@ def align_sheets(
             coarse = coarse.reindex(grid.union(coarse.index)).sort_index()
             coarse = coarse.ffill().reindex(grid)
             info.sheets[name] = (
-                f"passo {step_s} ≥ passo do alvo — propagada (forward-fill)"
+                f"passo {fmt_step(step_s)} ≥ passo do alvo — propagada "
+                "(forward-fill)"
             )
             info.notes.append(
                 f"Aba '{name}' tem granularidade igual/mais grossa que o alvo; "

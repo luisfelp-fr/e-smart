@@ -13,7 +13,12 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .aggregation import METRIC_FRIENDLY, base_indicator, metric_of
+from .aggregation import (
+    METRIC_FRIENDLY,
+    base_indicator,
+    fmt_timedelta_br,
+    metric_of,
+)
 from .pipeline import AnalysisResult
 
 _DIRECTION_PHRASES = {
@@ -57,31 +62,8 @@ def _friendly_name(column: str) -> str:
     return f"'{base}' — {desc}"
 
 
-def _fmt_timedelta_br(td) -> str:
-    """Duração em linguagem natural pt-BR ("12 horas", "3,5 dias")."""
-    secs = float(pd.Timedelta(td).total_seconds())
-    units = [
-        (604800.0, ("semana", "semanas")),
-        (86400.0, ("dia", "dias")),
-        (3600.0, ("hora", "horas")),
-        (60.0, ("minuto", "minutos")),
-        (1.0, ("segundo", "segundos")),
-    ]
-    def fmt(v: float, sing: str, plur: str) -> str:
-        txt = f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
-        return f"{txt} {sing if abs(v - 1.0) < 1e-9 else plur}"
-
-    # prefere a maior unidade que expressa a duração sem arredondar
-    # (28 horas fica "28 horas", não "1,2 dias"); senão, aproxima na maior
-    for size, (sing, plur) in units:
-        v = secs / size
-        if 1.0 <= v < 1000.0 and abs(v - round(v, 1)) < 1e-9:
-            return fmt(v, sing, plur)
-    for size, (sing, plur) in units:
-        v = secs / size
-        if v >= 1.0:
-            return fmt(v, sing, plur)
-    return "menos de 1 segundo"
+# formatação humanizada de durações centralizada em aggregation.fmt_timedelta_br
+_fmt_timedelta_br = fmt_timedelta_br
 
 
 def _time_step(index) -> tuple[pd.Timedelta | None, str]:
