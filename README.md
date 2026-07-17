@@ -81,6 +81,27 @@ PDF** (uma seção por análise, com textos, tabelas e imagens dos gráficos).
 > **Deploy no Streamlit:** a branch de referência do app é a **`main`** —
 > aponte o Streamlit Cloud para ela; toda melhoria é entregue lá.
 
+## Desempenho com muitos dados
+
+O app foi endurecido para bases grandes (ex.: dezenas de indicadores minuto a
+minuto por meses):
+
+- **Módulo 1** roda sobre todos os dados; as cartas I-AM, QQ e demais gráficos
+  **rarefazem os pontos apenas para desenho** (limite ~8 mil) para não travar o
+  navegador — todas as estatísticas usam a série completa e o subtítulo informa
+  quando houve rarefação.
+- **Módulo 2** tem um **teto de linhas** (padrão 10 mil, ajustável em *Opções da
+  análise*): acima dele as linhas são **agregadas pela média em blocos
+  consecutivos** — equivale a reamostrar para uma grade de tempo mais grossa,
+  o que **preserva os efeitos com atraso/permanência** (os lags continuam
+  traduzidos para a escala de tempo correta) e evita lentidão e estouro de
+  memória. Etapas caras (Random Forest, informação mútua) também subamostram/
+  escalonam o esforço conforme o tamanho do problema.
+
+Dica: no **Streamlit Community Cloud** (plano gratuito, ~1 vCPU e ~2,7 GB de
+RAM), mantenha o teto do Módulo 2 em 5–10 mil linhas para respostas em poucos
+minutos.
+
 ## Uso por linha de comando (motor do Módulo 2)
 
 O motor de análise causal também funciona como CLI/biblioteca:

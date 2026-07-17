@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from causal_analysis import plots_plotly as pp
+from causal_analysis.aggregation import reduce_to_scale
 from causal_analysis.managerial_report import build_managerial_report
 from causal_analysis.pipeline import analyze_dataframe
 from shared.io_loader import load_workbook, prepare_analysis_frame
@@ -20,12 +21,22 @@ def _columns_of(file_path: str) -> dict[str, list[str]]:
     return {name: [str(c) for c in df.columns] for name, df in frames.items()}
 
 
+@st.cache_data(show_spinner=False)
+def _row_count(file_path: str, target: str) -> int:
+    try:
+        df, _, _ = prepare_analysis_frame(file_path, target)
+        return len(df)
+    except Exception:
+        return 0
+
+
 @st.cache_data(show_spinner="Analisando os dados — isso pode levar alguns instantes...")
-def _run(file_path: str, target: str, max_lag: int, alpha: float):
+def _run(file_path: str, target: str, max_lag: int, alpha: float, max_rows: int):
     df, align, sheet_infos = prepare_analysis_frame(file_path, target)
+    df, scale_note = reduce_to_scale(df, max_rows=max_rows)
     result = analyze_dataframe(df, target, max_lag=max_lag, alpha=alpha,
                                verbose=False)
-    return df, align, sheet_infos, result
+    return df, align, sheet_infos, result, scale_note
 
 
 def render_module2(file_path: str | None) -> None:
@@ -59,6 +70,7 @@ def render_module2(file_path: str | None) -> None:
     )
     st.session_state["m2_target"] = target
 
+    n_rows = _row_count(file_path, target)
     with st.expander("⚙️ Opções da análise"):
         max_lag = st.slider(
             "Defasagem máxima testada (lag)", 1, 30, 14,
@@ -70,6 +82,26 @@ def render_module2(file_path: str | None) -> None:
             help="Limiar de significância com controle de falsos positivos "
                  "(FDR). Menor = mais rigoroso.",
         )
+        max_rows = st.select_slider(
+            "Máximo de linhas para a análise (desempenho)",
+            options=[5000, 10000, 15000, 30000, 50000, 100000],
+            value=10000,
+            help="Séries muito longas (ex.: minuto a minuto por meses) deixam "
+                 "a análise lenta e podem estourar a memória. Acima deste "
+                 "limite, as linhas são agregadas pela média em blocos "
+                 "consecutivos (equivale a reamostrar para uma grade mais "
+                 "grossa) — os efeitos com atraso são preservados numa escala "
+                 "de tempo maior. Menor = mais rápido; maior = mais detalhe.",
+        )
+    if n_rows > max_rows:
+        st.info(
+            f"📉 Este conjunto tem **{n_rows:,}** linhas. Para caber no limite "
+            f"de **{max_rows:,}**, elas serão **agregadas pela média** em "
+            "blocos consecutivos antes da análise (isso preserva os efeitos "
+            "com atraso, apenas numa escala de tempo maior). Ajuste o limite "
+            "em **⚙️ Opções da análise**.".replace(",", "."),
+            icon="⚙️",
+        )
 
     if not st.button("▶️ Analisar", type="primary"):
         if "m2_last" in st.session_state:
@@ -78,11 +110,15 @@ def render_module2(file_path: str | None) -> None:
             return
 
     try:
-        df, align, sheet_infos, result = _run(file_path, target, max_lag, alpha)
+        df, align, sheet_infos, result, scale_note = _run(
+            file_path, target, max_lag, alpha, max_rows)
         st.session_state["m2_last"] = (file_path, target, max_lag, alpha)
     except ValueError as e:
         st.error(str(e))
         return
+
+    if scale_note:
+        st.success(f"⚙️ {scale_note}", icon="✅")
 
     # ---- diagnóstico do alinhamento multi-aba --------------------------
     if len(align.sheets) > 1:

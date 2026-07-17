@@ -44,6 +44,24 @@ def _base_axes(fig: go.Figure) -> None:
                      title_standoff=16, automargin=True)
 
 
+# acima disso, séries de pontos são rarefeidas só para desenho (evita travar o
+# navegador e o LOWESS O(n²) na dispersão); as estatísticas do Módulo 2 são
+# calculadas à parte, sobre todos os dados
+MAX_PLOT_POINTS = 8000
+
+
+def _thin(*arrays, max_points: int = MAX_PLOT_POINTS):
+    """Rarefaz arrays paralelos por passo fixo; devolve (arrays..., reduziu?)."""
+    n = len(arrays[0])
+    if n <= max_points:
+        return (*arrays, False)
+    step = int(np.ceil(n / max_points))
+    idx = np.arange(0, n, step)
+    if idx[-1] != n - 1:
+        idx = np.append(idx, n - 1)
+    return (*[np.asarray(a)[idx] for a in arrays], True)
+
+
 def fig_ranking(scores: pd.DataFrame, top: int = 15) -> go.Figure:
     """Barras horizontais do score; a cor codifica a direção do efeito."""
     data = scores.head(top).iloc[::-1]
@@ -157,8 +175,10 @@ def fig_scatter(x: pd.Series, y: pd.Series, name: str, target: str,
     """Dispersão do indicador (melhor transformação) vs. alvo, com LOWESS."""
     m = x.notna() & y.notna()
     xa, ya = x[m].to_numpy(float), y[m].to_numpy(float)
+    # rarefaz para o desenho E para o LOWESS (O(n²) — inviável em séries longas)
+    xd, yd, thinned = _thin(xa, ya)
     fig = go.Figure(go.Scatter(
-        x=xa, y=ya, mode="markers",
+        x=xd, y=yd, mode="markers",
         marker=dict(size=6, color=BLUE, opacity=0.4),
         name="observações",
         hovertemplate=f"{name}: %{{x:.4g}}<br>{target}: %{{y:.4g}}"
@@ -167,7 +187,7 @@ def fig_scatter(x: pd.Series, y: pd.Series, name: str, target: str,
     try:
         from statsmodels.nonparametric.smoothers_lowess import lowess
 
-        smooth = lowess(ya, xa, frac=0.4, return_sorted=True)
+        smooth = lowess(yd, xd, frac=0.4, return_sorted=True)
         fig.add_trace(go.Scatter(
             x=smooth[:, 0], y=smooth[:, 1], mode="lines",
             line=dict(color=BLUE_DARK, width=2.5), name="tendência (LOWESS)",
@@ -175,9 +195,12 @@ def fig_scatter(x: pd.Series, y: pd.Series, name: str, target: str,
         ))
     except Exception:
         pass
+    sub = transform_label + (
+        f" · exibindo {len(xd):,} de {len(xa):,} pontos".replace(",", ".")
+        if thinned else "")
     fig.update_layout(
         title=f"Forma da relação — {name} vs. {target}"
-              f"<br><sup>{transform_label}</sup>",
+              f"<br><sup>{sub}</sup>",
         xaxis_title=f"{name} ({transform_label})", yaxis_title=target,
         height=410, showlegend=False, **_LAYOUT,
     )
@@ -221,22 +244,28 @@ def fig_timeseries_overlay(y: pd.Series, x: pd.Series,
         std = s.std()
         return (s - s.mean()) / std if std and np.isfinite(std) else s * 0
 
+    # z-score sobre a série completa; rarefaz só o que vai para a tela
+    yi, yv, thinned = _thin(np.asarray(y.index, dtype=object), z(y).to_numpy(float))
+    xi, xv, _ = _thin(np.asarray(x.index, dtype=object), z(x).to_numpy(float))
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=y.index, y=z(y), mode="lines",
+        x=yi, y=yv, mode="lines",
         line=dict(color=BLUE, width=2), name=f"{target} (alvo)",
         hovertemplate="%{x}<br>z: %{y:.2f}<extra>" + target + "</extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=x.index, y=z(x), mode="lines",
+        x=xi, y=xv, mode="lines",
         line=dict(color=GREEN, width=1.6), name=name, opacity=0.9,
         hovertemplate="%{x}<br>z: %{y:.2f}<extra>" + name + "</extra>",
     ))
     fig.add_hline(y=0, line_color=BASELINE, line_width=1)
+    sub = ("séries padronizadas (z-score) para caberem no mesmo eixo — "
+           "procure movimentos conjuntos ou defasados")
+    if thinned:
+        sub += f" · exibindo {len(yi):,} de {len(y):,} pontos".replace(",", ".")
     fig.update_layout(
         title="Evolução temporal comparada"
-              "<br><sup>séries padronizadas (z-score) para caberem no mesmo "
-              "eixo — procure movimentos conjuntos ou defasados</sup>",
+              f"<br><sup>{sub}</sup>",
         yaxis_title="z-score (padronizado)",
         height=380,
         legend=dict(orientation="h", y=1.04, yanchor="bottom",

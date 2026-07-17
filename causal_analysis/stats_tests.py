@@ -23,6 +23,7 @@ from .features import derived_features, feature_label
 
 RNG_SEED = 42
 DCOR_MAX_N = 600  # matriz O(n²): subamostra acima disso
+MI_MAX_N = 5000   # KNN da informação mútua fica caro; subamostra acima disso
 
 
 # ---------------------------------------------------------------- associação
@@ -86,6 +87,11 @@ def mutual_information(x: pd.Series, y: pd.Series) -> tuple[float, float]:
     xa, ya = _aligned(x, y)
     if len(xa) < 20:
         return float("nan"), float("nan")
+    # a MI é um número único de associação; subamostrar acima de MI_MAX_N mantém
+    # a estimativa e evita o custo do KNN em séries muito longas
+    if len(xa) > MI_MAX_N:
+        idx = np.random.default_rng(RNG_SEED).choice(len(xa), MI_MAX_N, replace=False)
+        xa, ya = xa[idx], ya[idx]
     mi = float(
         mutual_info_regression(
             xa.reshape(-1, 1), ya, random_state=RNG_SEED, n_neighbors=5

@@ -110,6 +110,48 @@ def fmt_step(step) -> str:
     return f"{v} linha" if float(step) == 1 else f"{v} linhas"
 
 
+def reduce_to_scale(
+    df: pd.DataFrame, max_rows: int = 15000
+) -> tuple[pd.DataFrame, str | None]:
+    """Agrega linhas consecutivas pela média até caber em ``max_rows``.
+
+    Séries muito longas (ex.: minuto a minuto por meses) tornam o Módulo 2
+    lento e podem estourar a memória. Em vez de subamostrar (o que destruiria
+    a estrutura de defasagens), agregamos blocos de ``fator`` linhas
+    consecutivas — o equivalente a reamostrar para uma grade mais grossa, o
+    que PRESERVA os efeitos com atraso/permanência, apenas numa escala de
+    tempo maior. As etapas do módulo já traduzem os lags para essa escala.
+
+    Devolve (df reduzido, nota explicativa) ou (df original, None).
+    """
+    n = len(df)
+    if n <= max_rows or n < 2:
+        return df, None
+    factor = int(np.ceil(n / max_rows))
+    if factor < 2:
+        return df, None
+    groups = np.arange(n) // factor
+    reduced = df.groupby(groups).mean(numeric_only=True)
+    # índice representativo: o primeiro rótulo de cada bloco (mantém o tipo e,
+    # para datas, faz o passo virar ~fator × passo original)
+    reduced.index = df.index[::factor][: len(reduced)]
+    reduced.index.name = df.index.name
+    old_step = infer_step(df.index)
+    new_step = infer_step(reduced.index)
+    detalhe = ""
+    if isinstance(old_step, pd.Timedelta) and isinstance(new_step, pd.Timedelta):
+        detalhe = (f" — o passo passou de ~{fmt_step(old_step)} para "
+                   f"~{fmt_step(new_step)}")
+    nota = (
+        f"Volume alto: {n:,} linhas foram agregadas pela média em blocos de "
+        f"{factor} para {len(reduced):,} linhas{detalhe}. Isso mantém os "
+        "efeitos com atraso/permanência (numa escala de tempo maior) e evita "
+        "lentidão/estouro de memória. Reduza este limite para acelerar mais, "
+        "ou aumente-o para mais detalhe."
+    ).replace(",", ".")
+    return reduced, nota
+
+
 def aggregate_to_grid(
     fine: pd.DataFrame, grid: pd.Index, prefix: str = ""
 ) -> pd.DataFrame:

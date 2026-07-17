@@ -70,6 +70,33 @@ def test_fmt_timedelta_br():
     assert _fmt_timedelta_br(pd.Timedelta(days=14)) == "2 semanas"
 
 
+def test_reduce_to_scale_preserva_estrutura():
+    from causal_analysis.aggregation import infer_step, reduce_to_scale
+
+    idx = pd.date_range("2024-01-01", periods=50000, freq="min")
+    df = pd.DataFrame({"a": np.arange(50000.0), "alvo": np.arange(50000.0)},
+                      index=idx)
+    red, nota = reduce_to_scale(df, max_rows=10000)
+    assert len(red) <= 10000
+    assert list(red.columns) == ["a", "alvo"]           # colunas preservadas
+    assert infer_step(red.index) > pd.Timedelta(minutes=1)  # grade mais grossa
+    assert nota and "agregadas" in nota
+    # abaixo do teto: sem alteração
+    red2, nota2 = reduce_to_scale(df.head(3000), max_rows=10000)
+    assert len(red2) == 3000 and nota2 is None
+
+
+def test_thin_rarefaz_mantendo_extremos():
+    from capability.charts import _thin
+
+    x = np.arange(100000.0)
+    xd, reduziu = _thin(x, max_points=8000)
+    assert reduziu and len(xd) <= 8001
+    assert xd[0] == 0.0 and xd[-1] == 99999.0     # 1º e último preservados
+    xs, reduziu2 = _thin(np.arange(500.0), max_points=8000)
+    assert not reduziu2 and len(xs) == 500
+
+
 def test_lag_phrase_traduzido_para_escala_de_tempo():
     step = pd.Timedelta(hours=4)
     frase = _lag_phrase("lag 3", step)

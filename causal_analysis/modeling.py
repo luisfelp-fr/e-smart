@@ -36,6 +36,23 @@ class MLResult:
     skipped_reason: str | None = None
 
 
+def _adaptive_effort(n_obs: int, n_features: int,
+                     n_estimators: int) -> tuple[int, int]:
+    """Escalona (n_estimators, n_repeats) pelo tamanho do problema.
+
+    O custo da importância por permutação cresce com obs × features × árvores
+    × repetições. Com muitos indicadores (⇒ muitas features) ou muitas linhas,
+    reduzimos árvores e repetições para manter o tempo tratável no Streamlit,
+    sem alterar a natureza do resultado (ranking por importância).
+    """
+    work = n_obs * n_features
+    if work > 4_000_000:      # ex.: 15k linhas × 540 features
+        return min(n_estimators, 120), 2
+    if work > 1_500_000:
+        return min(n_estimators, 200), 3
+    return n_estimators, 5
+
+
 def ml_importance(
     df: pd.DataFrame,
     target: str,
@@ -55,6 +72,10 @@ def ml_importance(
         )
         return res
 
+    trees, n_repeats = _adaptive_effort(len(X), X.shape[1], n_estimators)
+    # problemas grandes: menos folds também (cada fold treina uma floresta)
+    if len(X) * X.shape[1] > 4_000_000:
+        n_splits = min(n_splits, 3)
     n_splits = min(n_splits, max(2, len(X) // 40))
     splitter = TimeSeriesSplit(n_splits=n_splits)
     imp_acc = np.zeros(X.shape[1])
@@ -65,7 +86,7 @@ def ml_importance(
         if len(test_idx) < 15:
             continue
         model = RandomForestRegressor(
-            n_estimators=n_estimators,
+            n_estimators=trees,
             min_samples_leaf=3,
             max_features="sqrt",
             random_state=RNG_SEED,
@@ -80,7 +101,7 @@ def ml_importance(
                 model,
                 X.iloc[test_idx],
                 y.iloc[test_idx],
-                n_repeats=5,
+                n_repeats=n_repeats,
                 random_state=RNG_SEED,
                 n_jobs=-1,
             )

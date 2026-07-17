@@ -52,6 +52,28 @@ def _base_axes(fig: go.Figure) -> None:
                      title_standoff=16, automargin=True)
 
 
+# acima deste total, séries de pontos individuais são rarefeidas SÓ para
+# exibição (as estatísticas continuam calculadas sobre todos os dados) — evita
+# que o navegador trave ao desenhar centenas de milhares de marcadores SVG
+MAX_PLOT_POINTS = 8000
+
+
+def _thin(*arrays, max_points: int = MAX_PLOT_POINTS):
+    """Rarefaz arrays paralelos por passo fixo, preservando 1º e último ponto.
+
+    Devolve (arrays reduzidos..., houve_reducao: bool). Usado apenas para o
+    desenho; nenhum cálculo estatístico passa por aqui.
+    """
+    n = len(arrays[0])
+    if n <= max_points:
+        return (*arrays, False)
+    step = int(np.ceil(n / max_points))
+    idx = np.arange(0, n, step)
+    if idx[-1] != n - 1:
+        idx = np.append(idx, n - 1)
+    return (*[np.asarray(a)[idx] for a in arrays], True)
+
+
 def _fmt(v: float | None, nd: int = 2) -> str:
     if v is None or not np.isfinite(v):
         return "—"
@@ -188,9 +210,11 @@ def fig_imr(rep: CapabilityReport, show_spec: bool = False) -> go.Figure:
                         "Amplitude Móvel (|diferença entre pontos vizinhos|)"),
     )
 
-    # ---- painel 1: individuais
+    # ---- painel 1: individuais (rarefeito só para desenho se muito longo)
+    lbl_d, vals_d, thinned = _thin(np.asarray(labels, dtype=object), vals)
+    big = len(vals) > MAX_PLOT_POINTS
     fig.add_trace(go.Scatter(
-        x=labels, y=vals, mode="lines+markers",
+        x=lbl_d, y=vals_d, mode="lines" if big else "lines+markers",
         line=dict(color=BLUE, width=1.6), marker=dict(size=5, color=BLUE),
         name="valores",
         hovertemplate="%{x}<br>valor: %{y:.4g}<extra></extra>",
@@ -230,6 +254,11 @@ def fig_imr(rep: CapabilityReport, show_spec: bool = False) -> go.Figure:
         v_vals = [float(x.loc[lb]) for lb in v_labels]
         v_txt = ["<br>".join(RULE_LABELS[r] for r in imr.violations[lb])
                  for lb in v_labels]
+        # em séries longas as causas especiais podem ser milhares; rarefaz os
+        # marcadores desenhados (a contagem real vai no subtítulo)
+        v_labels, v_vals, v_txt, _ = _thin(
+            np.asarray(v_labels, dtype=object), np.asarray(v_vals),
+            np.asarray(v_txt, dtype=object))
         fig.add_trace(go.Scatter(
             x=v_labels, y=v_vals, mode="markers",
             marker=dict(size=11, color=RED, symbol="circle-open",
@@ -241,8 +270,9 @@ def fig_imr(rep: CapabilityReport, show_spec: bool = False) -> go.Figure:
     # ---- painel 2: amplitudes móveis
     if len(mr):
         mr_labels = labels[1:]
+        mrl_d, mrv_d, _ = _thin(np.asarray(mr_labels, dtype=object), mr)
         fig.add_trace(go.Scatter(
-            x=mr_labels, y=mr, mode="lines+markers",
+            x=mrl_d, y=mrv_d, mode="lines" if big else "lines+markers",
             line=dict(color=BLUE, width=1.4), marker=dict(size=4, color=BLUE),
             name="amplitude móvel", showlegend=False,
             hovertemplate="%{x}<br>AM: %{y:.4g}<extra></extra>",
@@ -270,6 +300,9 @@ def fig_imr(rep: CapabilityReport, show_spec: bool = False) -> go.Figure:
     n_viol = len(imr.violations)
     status = ("processo sob controle estatístico" if imr.in_control
               else f"{n_viol} ponto(s) com causa especial")
+    if thinned:
+        status += (f" · exibindo {len(vals_d):,} de {len(vals):,} pontos "
+                   "(cálculos usam todos)").replace(",", ".")
     layout = dict(_LAYOUT)
     # rótulos LSC/LIC à direita; legenda abaixo do segundo painel
     layout["margin"] = dict(l=70, r=120, t=100, b=95)
@@ -307,9 +340,11 @@ def fig_qqplot(rep: CapabilityReport, transformed: bool = False) -> go.Figure:
     (osm, osr), (slope, intercept, r) = stats.probplot(
         data.to_numpy(dtype=float), dist="norm"
     )
+    # a reta e r usam todos os quantis; só os marcadores são rarefeitos
+    osm_d, osr_d, thinned = _thin(osm, osr)
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=osm, y=osr, mode="markers",
+        x=osm_d, y=osr_d, mode="markers",
         marker=dict(size=6, color=BLUE, opacity=0.7),
         name="dados",
         hovertemplate="quantil teórico: %{x:.3f}<br>observado: %{y:.4g}"
@@ -322,11 +357,13 @@ def fig_qqplot(rep: CapabilityReport, transformed: bool = False) -> go.Figure:
         hoverinfo="skip",
     ))
     p_txt = _fmt(norm.ad_p, 3) if norm else "—"
+    thin_note = (f" · exibindo {len(osm_d):,} de {len(osm):,} pontos"
+                 .replace(",", ".")) if thinned else ""
     fig.update_layout(
         title=(f"Gráfico de probabilidade normal — {rep.indicator}{title_extra}"
                f"<br><sup>Anderson-Darling p = {p_txt} · "
                f"correlação do ajuste = {_fmt(float(r), 3)} "
-               "(pontos sobre a reta ⇒ dados normais)</sup>"),
+               f"(pontos sobre a reta ⇒ dados normais){thin_note}</sup>"),
         xaxis_title="quantis teóricos da normal",
         yaxis_title="valores observados",
         showlegend=False, **_LAYOUT,
