@@ -12,6 +12,7 @@ from .modeling import MLResult, ml_importance
 from .scoring import score_parameters
 from .stats_tests import (
     correlations,
+    direct_effect_flags,
     distance_correlation,
     fdr_adjust,
     granger_causality,
@@ -161,5 +162,14 @@ def analyze_dataframe(
     }
 
     result.scores = score_parameters(pp, result.fdr, alpha)
+
+    log("Indício de efeito direto vs. indireto (correlação parcial)...")
+    flags = direct_effect_flags(
+        df, target, pp, list(result.scores["parametro"])
+    )
+    result.scores["efeito"] = result.scores["parametro"].map(
+        lambda p: flags.get(p, "—")
+    )
+
     log("Análise concluída.")
     return result

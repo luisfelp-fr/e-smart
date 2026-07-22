@@ -38,6 +38,28 @@ def _make_data(path: str, n: int = 300) -> None:
     ).to_csv(path, index=False)
 
 
+def test_efeito_direto_vs_indireto_em_cadeia():
+    # cadeia A -> B -> alvo: B deve ser "direto"; A, "indireto (via B)"
+    from causal_analysis.pipeline import analyze_dataframe
+
+    rng = np.random.default_rng(11)
+    n = 500
+    a = rng.normal(0, 1, n).cumsum()
+    b = 0.9 * a + rng.normal(0, 0.3, n)
+    alvo = 0.9 * b + rng.normal(0, 0.3, n)
+    df = pd.DataFrame({"A": a, "B": b, "alvo": alvo,
+                       "ruido": rng.normal(0, 1, n)},
+                      index=pd.RangeIndex(1, n + 1, name="ordem"))
+    res = analyze_dataframe(df, "alvo", max_lag=5, verbose=False)
+    assert "efeito" in res.scores.columns
+    efeitos = dict(zip(res.scores["parametro"], res.scores["efeito"]))
+    # B (elo direto) não pode ser rotulado indireto
+    assert not str(efeitos["B"]).startswith("indireto")
+    # A (age só através de B) deve ter indício de mediação via B
+    assert str(efeitos["A"]).startswith("indireto")
+    assert "B" in str(efeitos["A"])
+
+
 def test_pipeline_identifica_causas_e_gera_relatorio():
     with tempfile.TemporaryDirectory() as tmp:
         csv = os.path.join(tmp, "dados.csv")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 
 import pandas as pd
@@ -15,28 +16,32 @@ from shared.io_loader import load_workbook, prepare_analysis_frame
 from ui_components import add_to_report_button
 
 
-@st.cache_data(show_spinner=False)
-def _columns_of(file_path: str) -> dict[str, list[str]]:
+@st.cache_data(show_spinner=False, max_entries=4)
+def _sheet_meta(file_path: str) -> dict[str, dict]:
+    """Colunas e nº de linhas por aba (uma leitura leve, cacheada)."""
     frames, _ = load_workbook(file_path)
-    return {name: [str(c) for c in df.columns] for name, df in frames.items()}
+    return {
+        name: {"columns": [str(c) for c in df.columns], "n_rows": len(df)}
+        for name, df in frames.items()
+    }
 
 
-@st.cache_data(show_spinner=False)
-def _row_count(file_path: str, target: str) -> int:
-    try:
-        df, _, _ = prepare_analysis_frame(file_path, target)
-        return len(df)
-    except Exception:
-        return 0
-
-
-@st.cache_data(show_spinner="Analisando os dados — isso pode levar alguns instantes...")
+# cache_resource (e não cache_data): evita re-desserializar por pickle o
+# DataFrame + resultado a cada rerun, e max_entries=1 mantém UMA análise em
+# memória — essencial para não estourar a RAM do Streamlit Cloud. Os objetos
+# retornados são tratados como somente-leitura pela página.
+@st.cache_resource(
+    max_entries=1,
+    show_spinner="Analisando os dados — isso pode levar alguns instantes...",
+)
 def _run(file_path: str, target: str, max_lag: int, alpha: float, max_rows: int):
-    df, align, sheet_infos = prepare_analysis_frame(file_path, target)
+    df, align, _sheet_infos = prepare_analysis_frame(file_path, target)
     df, scale_note = reduce_to_scale(df, max_rows=max_rows)
     result = analyze_dataframe(df, target, max_lag=max_lag, alpha=alpha,
                                verbose=False)
-    return df, align, sheet_infos, result, scale_note
+    del df  # result.df já contém a versão usada pela página
+    gc.collect()
+    return align, result, scale_note
 
 
 def render_module2(file_path: str | None) -> None:
@@ -53,12 +58,12 @@ def render_module2(file_path: str | None) -> None:
         return
 
     try:
-        cols_by_sheet = _columns_of(file_path)
+        sheet_meta = _sheet_meta(file_path)
     except ValueError as e:
         st.error(str(e))
         return
 
-    all_cols = sorted({c for cols in cols_by_sheet.values() for c in cols})
+    all_cols = sorted({c for m in sheet_meta.values() for c in m["columns"]})
     default_target = st.session_state.get("m2_target")
     idx = all_cols.index(default_target) if default_target in all_cols else 0
     target = st.selectbox(
@@ -70,7 +75,10 @@ def render_module2(file_path: str | None) -> None:
     )
     st.session_state["m2_target"] = target
 
-    n_rows = _row_count(file_path, target)
+    # nº de linhas da aba do alvo (define a grade da análise) — leitura leve
+    n_rows = next(
+        (m["n_rows"] for m in sheet_meta.values() if target in m["columns"]), 0
+    )
     with st.expander("⚙️ Opções da análise"):
         max_lag = st.slider(
             "Defasagem máxima testada (lag)", 1, 30, 14,
@@ -110,7 +118,7 @@ def render_module2(file_path: str | None) -> None:
             return
 
     try:
-        df, align, sheet_infos, result, scale_note = _run(
+        align, result, scale_note = _run(
             file_path, target, max_lag, alpha, max_rows)
         st.session_state["m2_last"] = (file_path, target, max_lag, alpha)
     except ValueError as e:

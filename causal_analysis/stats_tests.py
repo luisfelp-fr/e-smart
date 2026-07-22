@@ -207,6 +207,113 @@ def granger_causality(x: pd.Series, y: pd.Series, max_lag: int) -> dict | None:
     }
 
 
+# --------------------------------------------- efeito direto vs. indireto
+
+def _rank(a: np.ndarray) -> np.ndarray:
+    return stats.rankdata(a).astype(float)
+
+
+def _residual(v: np.ndarray, controls: np.ndarray) -> np.ndarray:
+    """Resíduo de v após regressão linear nos controles (com intercepto)."""
+    Z = np.column_stack([np.ones(len(v)), controls])
+    beta, *_ = np.linalg.lstsq(Z, v, rcond=None)
+    return v - Z @ beta
+
+
+def _partial_spearman(x: np.ndarray, y: np.ndarray,
+                      controls: np.ndarray) -> float:
+    """Spearman parcial de x e y controlando pelas colunas de ``controls``."""
+    rx = _residual(_rank(x), controls)
+    ry = _residual(_rank(y), controls)
+    if np.std(rx) == 0 or np.std(ry) == 0:
+        return float("nan")
+    return float(stats.spearmanr(rx, ry)[0])
+
+
+def direct_effect_flags(
+    df: pd.DataFrame,
+    target: str,
+    per_param: dict[str, dict],
+    ranked_params: list[str],
+    top: int = 10,
+    max_controls: int = 5,
+) -> dict[str, str]:
+    """Indício de efeito DIRETO vs. INDIRETO por correlação parcial.
+
+    Inspirado em causal discovery (independência condicional, como no PC/
+    PCMCI), mas deliberadamente leve: para cada parâmetro do topo do ranking,
+    compara o Spearman marginal com o alvo ao Spearman PARCIAL controlando
+    pelos demais parâmetros do topo (na melhor transformação temporal de
+    cada um). Se a associação some ao controlar, o efeito provavelmente
+    passa por outro indicador (mediação) — sinalizamos "indireto (via X)",
+    onde X é o controle que mais reduz a associação (análise drop-one).
+
+    É um INDÍCIO heurístico, não um grafo causal: serve para o usuário
+    priorizar o caminho na investigação em cadeia.
+    """
+    head = [p for p in ranked_params[:top] if p != target]
+    if len(head) < 2:
+        return {}
+
+    # melhor versão temporal de cada parâmetro, alinhada ao alvo
+    from .features import derived_features
+
+    def best_series(p: str) -> pd.Series:
+        feat = per_param.get(p, {}).get("best_feature") or p
+        if feat != p:
+            # a melhor versão é derivada (lag/média móvel): recria a família
+            fam = derived_features(df[p], 30, [3, 7, 14])
+            if feat in fam.columns:
+                return fam[feat]
+        return df[p]
+
+    series = {p: best_series(p) for p in head}
+    aligned = pd.concat({**series, "__y__": df[target]}, axis=1).dropna()
+    if len(aligned) < 30:
+        return {}
+    y = aligned["__y__"].to_numpy(float)
+
+    flags: dict[str, str] = {}
+    for p in head:
+        x = aligned[p].to_numpy(float)
+        others = [q for q in head if q != p][:max_controls]
+        if not others or np.std(x) == 0:
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            rho_marg = float(stats.spearmanr(x, y)[0])
+            if not np.isfinite(rho_marg) or abs(rho_marg) < 0.05:
+                flags[p] = "—"
+                continue
+            ctrl = aligned[others].rank().to_numpy(float)
+            rho_part = _partial_spearman(x, y, ctrl)
+            if not np.isfinite(rho_part):
+                continue
+            ratio = abs(rho_part) / abs(rho_marg)
+            if ratio >= 0.6:
+                flags[p] = "direto"
+            elif ratio < 0.3:
+                # drop-one: qual controle mais "explica" a associação?
+                best_via, best_drop = None, 1.0
+                for q in others:
+                    rest = [r for r in others if r != q]
+                    if rest:
+                        rp = _partial_spearman(
+                            x, y, aligned[rest].rank().to_numpy(float))
+                    else:
+                        rp = rho_marg
+                    rq = _partial_spearman(
+                        x, y, aligned[[q]].rank().to_numpy(float))
+                    if np.isfinite(rq) and abs(rq) / abs(rho_marg) < best_drop:
+                        best_drop = abs(rq) / abs(rho_marg)
+                        best_via = q
+                flags[p] = (f"indireto (via {best_via})"
+                            if best_via else "indireto")
+            else:
+                flags[p] = "misto"
+    return flags
+
+
 # ------------------------------------------------------- análise de percentis
 
 def percentile_effect(

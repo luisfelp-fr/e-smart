@@ -21,6 +21,7 @@ import pandas as pd
 from .control_chart import IMRResult, imr_chart, remove_special_causes
 from .data_prep import OutlierReport, treat_missing, treat_outliers
 from .indices import CapabilityIndices, capability_indices, percentile_capability
+from .limit_review import LimitReview, review_limits
 from .nonparametric import (
     BoxStats,
     SuggestedLimits,
@@ -67,6 +68,8 @@ class CapabilityReport:
     box: BoxStats | None = None
     suggested: SuggestedLimits | None = None
     empirical: dict = field(default_factory=dict)
+    # balizamento dos limites definidos pelo usuário (aderência + recomendação)
+    limit_review: LimitReview | None = None
     notes: list[str] = field(default_factory=list)
     narrative: str = ""
 
@@ -197,6 +200,7 @@ def run_capability(
             rep.indices = percentile_capability(x, lsl, usl)
 
     rep.case_label = CASE_LABELS.get(rep.case, "")
+    rep.limit_review = review_limits(rep)
     rep.narrative = _narrative(rep)
     return rep
 
@@ -254,4 +258,19 @@ def _narrative(rep: CapabilityReport) -> str:
         )
     if rep.case == 3 and rep.suggested is not None and rep.suggested.rationale:
         parts.append(rep.suggested.rationale)
+    lr = rep.limit_review
+    if lr is not None and lr.situacao:
+        rec = []
+        if lr.rec_lsl is not None:
+            rec.append(f"inferior {_fmt(lr.rec_lsl, 4)}")
+        if lr.rec_usl is not None:
+            rec.append(f"superior {_fmt(lr.rec_usl, 4)}")
+        frase = f"Revisão dos limites: {lr.situacao_label.lower()}."
+        if rec and lr.situacao != "aderente":
+            frase += (" Novos limites recomendados: " + " e ".join(rec)
+                      + f" ({lr.metodo}).")
+        elif rec:
+            frase += (" Referência do processo: " + " e ".join(rec)
+                      + f" ({lr.metodo}).")
+        parts.append(frase)
     return " ".join(parts)

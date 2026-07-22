@@ -64,6 +64,9 @@ def ml_importance(
     """Treina RF em janelas crescentes e agrega importâncias por parâmetro."""
     res = MLResult()
     X, y, groups = build_matrix(df, target, max_lag, windows)
+    # float32: metade da memória da matriz sem efeito prático no ranking
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
     res.n_features, res.n_obs = X.shape[1], len(X)
     if len(X) < 60:
         res.skipped_reason = (
@@ -97,13 +100,16 @@ def ml_importance(
             model.fit(X.iloc[train_idx], y.iloc[train_idx])
             pred = model.predict(X.iloc[test_idx])
             res.r2_folds.append(float(r2_score(y.iloc[test_idx], pred)))
+            # n_jobs=1: com processos (loky), cada worker copiaria modelo +
+            # matriz — em máquinas pequenas (Streamlit Cloud) isso estoura a
+            # RAM; o ganho de paralelismo não compensa
             perm = permutation_importance(
                 model,
                 X.iloc[test_idx],
                 y.iloc[test_idx],
                 n_repeats=n_repeats,
                 random_state=RNG_SEED,
-                n_jobs=-1,
+                n_jobs=1,
             )
         imp_acc += perm.importances_mean
         imp_sq += perm.importances_mean**2

@@ -70,7 +70,8 @@ def fig_ranking(scores: pd.DataFrame, top: int = 15) -> go.Figure:
         (f"<b>{r.parametro}</b><br>score: {r.score:.0f}/100"
          f"<br>veredito: {r.veredito}<br>direção: {r.direcao_label}"
          f"<br>melhor transformação: {r.melhor_transformacao}"
-         f"<br>testes significativos: {r.testes_significativos}")
+         f"<br>testes significativos: {r.testes_significativos}"
+         + (f"<br>efeito: {r.efeito}" if hasattr(r, "efeito") else ""))
         for r in data.itertuples()
     ]
     fig = go.Figure(go.Bar(

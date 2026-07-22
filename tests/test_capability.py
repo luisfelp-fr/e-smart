@@ -179,6 +179,43 @@ def test_loader_com_data_brasileira(tmp_path):
     assert str(df.index[0].date()) == "2024-06-01"  # dd/mm
 
 
+# ------------------------------------------------------- revisão de limites
+
+def test_revisao_limites_caso1_aderente_e_revisar():
+    x = _serie(RNG.normal(10, 1, 800))
+    # limites folgados => aderente; recomendação = µ ± 3σ (só referência)
+    rep = run_capability(x, "ind", lsl=4, usl=16)
+    lr = rep.limit_review
+    assert lr.situacao == "aderente"
+    assert abs(lr.rec_lsl - (rep.indices.mean - 3 * rep.indices.sigma_overall)) < 1e-9
+    assert abs(lr.rec_usl - (rep.indices.mean + 3 * rep.indices.sigma_overall)) < 1e-9
+    assert "Revisão dos limites" in rep.narrative
+    # limites apertados => revisar
+    rep2 = run_capability(x, "ind", lsl=9.5, usl=10.5)
+    assert rep2.limit_review.situacao == "revisar"
+    assert "recomendados" in rep2.narrative
+
+
+def test_revisao_limites_unilateral_so_um_lado():
+    x = _serie(RNG.normal(50, 2, 500))
+    rep = run_capability(x, "ind", usl=58)  # só LSE
+    lr = rep.limit_review
+    assert lr.rec_lsl is None          # não inventa o lado que não existe
+    assert lr.rec_usl is not None
+
+
+def test_revisao_limites_caso3_usa_regra_dos_quartis():
+    a = RNG.normal(10, 0.5, 400)
+    b = RNG.normal(20, 0.5, 400)
+    x = _serie(np.concatenate([a, b]))
+    rep = run_capability(x, "ind", lsl=8, usl=22)
+    assert rep.case == 3
+    lr = rep.limit_review
+    assert abs(lr.rec_lsl - rep.suggested.suggested_lsl) < 1e-9  # Q2
+    assert abs(lr.rec_usl - rep.suggested.suggested_usl) < 1e-9  # Q3
+    assert "quartis" in lr.metodo
+
+
 def test_loader_ods(tmp_path):
     # o uploader aceita .ods — a leitura precisa funcionar (engine odfpy)
     p = tmp_path / "dados.ods"

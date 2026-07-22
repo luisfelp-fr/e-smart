@@ -27,6 +27,22 @@ th { background: #f4f3ef; color: #52514e; font-weight: 600; }
 """
 
 
+def _fmt_or_dash(v) -> str:
+    if v is None:
+        return "—"
+    return f"{v:.4g}".replace(".", ",")
+
+
+def limit_reviews_of(items: list[dict]) -> list[dict]:
+    """Extrai as revisões de limites (meta) dos itens do Módulo 1."""
+    out = []
+    for it in items:
+        lr = (it.get("meta") or {}).get("limit_review")
+        if lr:
+            out.append(lr)
+    return out
+
+
 def build_html(items: list[dict]) -> str:
     """Gera o HTML autocontido do relatório (figuras Plotly interativas)."""
     stamp = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -56,6 +72,34 @@ def build_html(items: list[dict]) -> str:
             ))
             parts.append("</div>")
             first_fig = False
+
+    # seção final: consolidação dos limites recomendados (Módulo 1)
+    reviews = limit_reviews_of(items)
+    if reviews:
+        situ_txt = {"aderente": "✅ aderente", "atencao": "🟡 atenção",
+                    "revisar": "🔴 revisar"}
+        parts.append("<h2>🎯 Limites recomendados (consolidado)"
+                     "<span class='item-mod'>Módulo 1</span></h2>")
+        parts.append(
+            "<p class='texto'>Balizamento dos limites de atuação avaliados "
+            "neste relatório: situação de aderência e novos limites "
+            "recomendados pela regra de cada caso.</p>"
+        )
+        linhas = "".join(
+            f"<tr><td>{r['indicador']}</td>"
+            f"<td>{situ_txt.get(r['situacao'], r['situacao'])}</td>"
+            f"<td>{_fmt_or_dash(r['lsl'])} · {_fmt_or_dash(r['usl'])}</td>"
+            f"<td><b>{_fmt_or_dash(r['rec_lsl'])} · "
+            f"{_fmt_or_dash(r['rec_usl'])}</b></td>"
+            f"<td>{r['metodo']}</td></tr>"
+            for r in reviews
+        )
+        parts.append(
+            "<table><tr><th>Indicador</th><th>Situação</th>"
+            "<th>Limites atuais (LIE · LSE)</th>"
+            "<th>Novos limites recomendados</th><th>Método</th></tr>"
+            f"{linhas}</table>"
+        )
     return "\n".join(parts)
 
 

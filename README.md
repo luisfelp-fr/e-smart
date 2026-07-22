@@ -63,6 +63,13 @@ pensado para dados industriais, que raramente são lineares ou normais.
 - Resultado em dois formatos: **ranking técnico** completo e **leitura
   gerencial** em frases simples ("quando X sobe, o alvo tende a cair; o efeito
   aparece ~3 períodos depois").
+- **Indício de efeito direto vs. indireto**: para o topo do ranking, a
+  correlação parcial (controlando pelos demais indicadores do topo) sinaliza
+  quando a associação de um indicador "some" ao descontar outro — "indireto
+  (via X)" sugere mediação e prioriza X na investigação em cadeia. É uma
+  versão leve da ideia de *causal discovery* (independência condicional, como
+  no PC/PCMCI), escolhida no lugar do PCMCI completo por custo computacional
+  e robustez com indicadores correlacionados.
 - **Investigação em cadeia**: qualquer variável do ranking pode virar o novo
   alvo, para seguir a trilha até a causa raiz.
 
@@ -100,7 +107,10 @@ minuto por meses):
 
 Dica: no **Streamlit Community Cloud** (plano gratuito, ~1 vCPU e ~2,7 GB de
 RAM), mantenha o teto do Módulo 2 em 5–10 mil linhas para respostas em poucos
-minutos.
+minutos. O app guarda **uma análise do Módulo 2 por vez** em memória (cache de
+1 entrada, sem cópias por rerun); a matriz do modelo usa float32 e a
+importância por permutação roda em processo único — mudanças pensadas para o
+app não estourar a RAM do plano gratuito.
 
 ## Uso por linha de comando (motor do Módulo 2)
 

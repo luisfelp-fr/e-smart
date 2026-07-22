@@ -9,4 +9,5 @@ textColor = "#0b0b0b"
 gatherUsageStats = false
 
 [server]
-maxUploadSize = 500
+# 200 MB: um CSV maior que isso, parseado, estoura a RAM do plano gratuito
+maxUploadSize = 200

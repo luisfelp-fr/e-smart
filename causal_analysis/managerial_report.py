@@ -175,6 +175,17 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
             f"Confiança: {_CONFIDENCE_PHRASES.get(row['confianca'], row['confianca'])} "
             f"(score {row['score']:.0f}/100)."
         )
+        efeito = str(row.get("efeito", "—"))
+        if efeito.startswith("indireto"):
+            via = efeito.split("via ")[-1].rstrip(")") if "via" in efeito else ""
+            frase += (
+                f" Atenção: ao descontar os demais indicadores do topo, a "
+                f"associação enfraquece — o efeito parece passar por "
+                f"'{base_indicator(via)}' (indício de efeito indireto)."
+                if via else
+                " Atenção: indício de efeito indireto (a associação "
+                "enfraquece ao descontar os demais indicadores do topo)."
+            )
         rep.findings.append(frase)
 
     # cautelas padrão + específicas
@@ -211,8 +222,15 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
     tab["quando impacta"] = tab["melhor_transformacao"].map(
         lambda label: _lag_phrase(str(label), step)
     )
-    rep.ranking_table = tab[[
-        "indicador", "o que foi medido", "score", "veredito",
-        "como impacta", "quando impacta", "confianca",
-    ]].rename(columns={"confianca": "confiança"})
+    cols = ["indicador", "o que foi medido", "score", "veredito",
+            "como impacta", "quando impacta", "confianca"]
+    if "efeito" in tab.columns:
+        cols.append("efeito")
+        if tab["efeito"].astype(str).str.startswith("indireto").any():
+            rep.cautions.append(
+                "Efeito 'indireto (via X)' é um INDÍCIO de mediação: a "
+                "associação com o alvo enfraquece quando se desconta X "
+                "(correlação parcial). Priorize investigar X na cadeia."
+            )
+    rep.ranking_table = tab[cols].rename(columns={"confianca": "confiança"})
     return rep

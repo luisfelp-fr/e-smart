@@ -169,4 +169,37 @@ def build_pdf(items: list[dict]) -> bytes:
             pdf.image(io.BytesIO(png), w=img_w)
             pdf.ln(3)
 
+    # seção final: consolidação dos limites recomendados (Módulo 1)
+    reviews = [lr for it in items
+               if (lr := (it.get("meta") or {}).get("limit_review"))]
+    if reviews:
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(*INK)
+        pdf.cell(0, 8, _latin1("Limites recomendados (consolidado)"),
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*INK_2)
+        pdf.multi_cell(
+            0, 5.4,
+            _latin1("Balizamento dos limites de atuação avaliados neste "
+                    "relatório: situação de aderência e novos limites "
+                    "recomendados pela regra de cada caso."),
+            new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+        def dash(v):
+            return "-" if v is None else f"{v:.4g}".replace(".", ",")
+
+        situ_txt = {"aderente": "aderente", "atencao": "atenção",
+                    "revisar": "REVISAR"}
+        tab = pd.DataFrame([{
+            "indicador": r["indicador"],
+            "situação": situ_txt.get(r["situacao"], r["situacao"]),
+            "limites atuais": f"{dash(r['lsl'])} / {dash(r['usl'])}",
+            "novos limites": f"{dash(r['rec_lsl'])} / {dash(r['rec_usl'])}",
+            "método": r["metodo"],
+        } for r in reviews])
+        _render_table(pdf, "", tab)
+
     return bytes(pdf.output())

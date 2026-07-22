@@ -273,13 +273,40 @@ def render_module1(file_path: str | None) -> None:
     for note in rep.notes:
         st.caption(f"ℹ️ {note}")
 
+    # ---- etapa 4: revisão dos limites ---------------------------------
+    import pandas as pd
+
+    lr = rep.limit_review
+    tabela_limites = None
+    if lr is not None and lr.situacao:
+        st.subheader(
+            "4️⃣ 🎯 Revisão dos limites de atuação",
+            help="O Módulo 1 baliza os limites previamente definidos: conclui "
+                 "se estão aderentes ao que o processo entrega (Ppk ≥ 1,33) "
+                 "ou se merecem revisão, e recomenda novos limites pela regra "
+                 "de cada caso.",
+        )
+        situ_icon = {"aderente": "🟢", "atencao": "🟡",
+                     "revisar": "🔴"}[lr.situacao]
+        st.markdown(f"**{situ_icon} {lr.situacao_label}**")
+        st.markdown(lr.motivo)
+        tabela_limites = pd.DataFrame({
+            "": ["Limite inferior (LIE)", "Limite superior (LSE)"],
+            "atual": [fmt_br(lr.lsl, 4) if lr.lsl is not None else "—",
+                      fmt_br(lr.usl, 4) if lr.usl is not None else "—"],
+            "recomendado": [
+                fmt_br(lr.rec_lsl, 4) if lr.rec_lsl is not None else "—",
+                fmt_br(lr.rec_usl, 4) if lr.rec_usl is not None else "—"],
+        }).set_index("")
+        st.table(tabela_limites)
+        st.caption(f"Método da recomendação: {lr.metodo}.")
+
     # ---- adicionar ao relatório ---------------------------------------
     st.divider()
     item_id = hashlib.md5(
         f"m1|{sheet_name}|{indicator}|{lsl}|{usl}|{outlier_method}|"
         f"{missing_method}|{sorted(map(str, removed))}".encode()
     ).hexdigest()[:12]
-    import pandas as pd
 
     resumo = pd.DataFrame({
         "métrica": ["Caso", "Cp", "Cpk", "Pp", "Ppk", "PPM fora",
@@ -291,14 +318,28 @@ def render_module1(file_path: str | None) -> None:
     figures["carta I-AM (limites de atuação)"] = fig_imr_spec
     figures["carta I-AM (controle)"] = fig_imr_ctrl
     figures["distribuição vs. sino"] = fig_bell
+    tables = {"Resumo dos índices": resumo}
+    meta = {}
+    if lr is not None and lr.situacao:
+        if tabela_limites is not None:
+            tables["Revisão de limites"] = tabela_limites
+        meta["limit_review"] = {
+            "indicador": indicator,
+            "situacao": lr.situacao,
+            "situacao_label": lr.situacao_label,
+            "lsl": lr.lsl, "usl": lr.usl,
+            "rec_lsl": lr.rec_lsl, "rec_usl": lr.rec_usl,
+            "metodo": lr.metodo,
+        }
     add_to_report_button(
         {
             "id": item_id,
             "module": "Módulo 1 — Capabilidade",
             "title": f"Capabilidade de '{indicator}'",
             "texts": [rep.narrative] + rep.notes,
-            "tables": {"Resumo dos índices": resumo},
+            "tables": tables,
             "figures": figures,
+            "meta": meta,
         },
         key=f"add_{item_id}",
     )
