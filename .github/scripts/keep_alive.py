@@ -52,20 +52,38 @@ def main() -> int:
                 return True
             return False
 
-        woke = try_wake(page)
-        if not woke:
+        def wake_everywhere() -> bool:
+            if try_wake(page):
+                return True
             for frame in page.frames[1:]:
                 try:
                     if try_wake(frame):
-                        woke = True
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        wake_everywhere()
+
+        # espera o Streamlit renderizar — o Community Cloud serve o app
+        # DENTRO de um iframe (/~/+/), então procura em todos os frames
+        import time as _time
+
+        deadline = _time.time() + BOOT_TIMEOUT_MS / 1000.0
+        rendered = False
+        while _time.time() < deadline and not rendered:
+            for frame in page.frames:
+                try:
+                    if frame.locator(RENDER_MARKER).count():
+                        rendered = True
                         break
                 except Exception:
                     continue
+            if not rendered:
+                wake_everywhere()  # a tela de hibernação pode surgir depois
+                page.wait_for_timeout(3000)
 
-        # espera o Streamlit renderizar de fato
-        try:
-            page.wait_for_selector(RENDER_MARKER, timeout=BOOT_TIMEOUT_MS)
-        except Exception:
+        if not rendered:
             print("ERRO: o app não renderizou dentro do tempo limite.",
                   flush=True)
             # diagnóstico para o log do workflow
