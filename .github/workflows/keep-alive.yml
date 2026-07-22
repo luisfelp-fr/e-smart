@@ -1,0 +1,50 @@
+# Bot keep-alive: visita o app no Streamlit Community Cloud a cada 6 horas
+# com navegador headless, acordando-o se estiver hibernado.
+#
+# Notas:
+# - Crons rodam apenas na BRANCH PADRÃO do repositório.
+# - O GitHub desabilita workflows agendados após ~60 dias sem atividade no
+#   repositório — basta reativar na aba Actions (ou fazer qualquer commit).
+# - Em falha (app não acordou), o run fica vermelho e o GitHub envia e-mail
+#   ao dono do repositório.
+
+name: Keep Streamlit app alive
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"   # a cada 6 h (UTC), minuto deslocado
+  workflow_dispatch: {}       # disparo manual para teste
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar Playwright
+        run: |
+          pip install --quiet playwright
+          playwright install --with-deps chromium
+
+      - name: Visitar o app (acorda se hibernado)
+        run: python .github/scripts/keep_alive.py
+
+      - name: Anexar screenshot em caso de falha
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keep-alive-fail
+          path: keep_alive_fail.png
+          if-no-files-found: ignore
