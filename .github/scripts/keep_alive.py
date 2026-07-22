@@ -35,18 +35,32 @@ def main() -> int:
         page.goto(APP_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(5_000)
 
-        # tela de hibernação? clica para acordar
-        for sel in WAKE_SELECTORS:
-            btn = page.locator(sel)
-            if btn.count():
-                print("app hibernado — clicando para acordar...", flush=True)
-                btn.first.click()
-                break
-        else:
-            body = page.content().lower()
-            if "gone to sleep" in body or "zzzz" in body:
-                print("tela de hibernação sem botão reconhecido; aguardando...",
+        # tela de hibernação? clica para acordar (procura em qualquer elemento
+        # clicável, inclusive dentro de iframes)
+        def try_wake(target) -> bool:
+            for sel in WAKE_SELECTORS:
+                btn = target.locator(sel)
+                if btn.count():
+                    print("app hibernado — clicando para acordar...", flush=True)
+                    btn.first.click()
+                    return True
+            txt = target.get_by_text("get this app back up")
+            if txt.count():
+                print("app hibernado — clicando no texto de acordar...",
                       flush=True)
+                txt.first.click()
+                return True
+            return False
+
+        woke = try_wake(page)
+        if not woke:
+            for frame in page.frames[1:]:
+                try:
+                    if try_wake(frame):
+                        woke = True
+                        break
+                except Exception:
+                    continue
 
         # espera o Streamlit renderizar de fato
         try:
@@ -54,6 +68,17 @@ def main() -> int:
         except Exception:
             print("ERRO: o app não renderizou dentro do tempo limite.",
                   flush=True)
+            # diagnóstico para o log do workflow
+            try:
+                print(f"URL final: {page.url}", flush=True)
+                print(f"título: {page.title()!r}", flush=True)
+                botoes = page.locator("button").all_inner_texts()
+                print(f"botões na página: {botoes[:10]}", flush=True)
+                corpo = " ".join(page.inner_text("body").split())
+                print(f"corpo (600c): {corpo[:600]!r}", flush=True)
+                print(f"iframes: {[f.url for f in page.frames]}", flush=True)
+            except Exception as diag_err:  # diagnóstico é melhor-esforço
+                print(f"(diagnóstico indisponível: {diag_err})", flush=True)
             page.screenshot(path="keep_alive_fail.png", full_page=True)
             browser.close()
             return 1
