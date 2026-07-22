@@ -66,12 +66,16 @@ pensado para dados industriais, que raramente são lineares ou normais.
 - **Indício de efeito direto vs. indireto**: para o topo do ranking, a
   correlação parcial (controlando pelos demais indicadores do topo) sinaliza
   quando a associação de um indicador "some" ao descontar outro — "indireto
-  (via X)" sugere mediação e prioriza X na investigação em cadeia. É uma
+  (via X)" sugere mediação e prioriza X na investigação. É uma
   versão leve da ideia de *causal discovery* (independência condicional, como
   no PC/PCMCI), escolhida no lugar do PCMCI completo por custo computacional
   e robustez com indicadores correlacionados.
-- **Investigação em cadeia**: qualquer variável do ranking pode virar o novo
-  alvo, para seguir a trilha até a causa raiz.
+- **Diagnóstico do dia** (aba do Módulo 2): escolha um dia/período e veja os
+  prováveis contribuintes daquele dia — cruzamento do ranking histórico com a
+  atipicidade de cada indicador no dia (percentil do valor do dia no próprio
+  histórico, avaliado na melhor transformação temporal). Indicado para o uso
+  "indicadores minuto a minuto + alvo diário": a aba do alvo diário define a
+  grade e os minutos viram métricas por dia automaticamente.
 
 ## Relatório
 

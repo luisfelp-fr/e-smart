@@ -180,9 +180,20 @@ def render_module2(file_path: str | None) -> None:
         key=f"add_{item_id}",
     )
 
-    # ---- detalhe por indicador -----------------------------------------
+    # ---- abas de exploração --------------------------------------------
     st.divider()
-    st.subheader("🔬 Investigar um indicador")
+    tab_diag, tab_detalhe = st.tabs(
+        ["📅 Diagnóstico do dia", "🔬 Investigar um indicador"]
+    )
+
+    with tab_diag:
+        _render_day_diagnosis(result)
+
+    with tab_detalhe:
+        _render_indicator_detail(result)
+
+
+def _render_indicator_detail(result) -> None:
     options = list(result.scores["parametro"])
     chosen = st.selectbox(
         "Indicador para detalhar", options,
@@ -243,26 +254,74 @@ def render_module2(file_path: str | None) -> None:
             use_container_width=True,
         )
 
-    # ---- investigação em cadeia ----------------------------------------
-    st.divider()
-    st.subheader("🧭 Continuar a investigação")
-    st.caption(
-        "Encontrou um culpado? Investigue **o que impacta ele**: torne-o o "
-        "novo alvo e rode a análise de novo — repetindo até chegar à causa "
-        "raiz."
-    )
-    from causal_analysis.aggregation import base_indicator
 
-    next_options = [
-        c for c in dict.fromkeys(
-            base_indicator(p) for p in result.scores["parametro"]
-        )
-        if c != target and c in all_cols
-    ]
-    if next_options:
-        c1, c2 = st.columns([3, 1])
-        new_target = c1.selectbox("Novo alvo", next_options,
-                                  label_visibility="collapsed")
-        if c2.button("🎯 Tornar alvo", type="secondary"):
-            st.session_state["m2_target"] = new_target
-            st.rerun()
+def _fmt_day(label) -> str:
+    """Rótulo do dia amigável (datas em pt-BR; sequência como 'linha N')."""
+    if isinstance(label, pd.Timestamp):
+        if label == label.normalize():
+            return label.strftime("%d/%m/%Y")
+        return label.strftime("%d/%m/%Y %H:%M")
+    return f"linha {label}"
+
+
+def _render_day_diagnosis(result) -> None:
+    from causal_analysis.day_diagnosis import diagnose_day
+
+    st.caption(
+        "**O que impactou o alvo num dia específico?** O diagnóstico cruza o "
+        "ranking histórico (quem move o alvo) com a **atipicidade de cada "
+        "indicador no dia escolhido** (percentil do valor do dia dentro do "
+        "próprio histórico). É um indício priorizado para investigação — "
+        "não prova causal."
+    )
+    labels = list(result.df[result.target].dropna().index)
+    if len(labels) < 3:
+        st.warning("Histórico insuficiente para diagnóstico por dia.")
+        return
+    dia = st.selectbox(
+        "Dia (período da grade do alvo) a diagnosticar",
+        list(reversed(labels)), format_func=_fmt_day,
+        help="Por padrão, o período mais recente — ex.: o dia de ontem.",
+    )
+    diag = diagnose_day(result, dia)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"Alvo no dia ({result.target})",
+              f"{diag.target_value:.4g}".replace(".", ",")
+              if pd.notna(diag.target_value) else "—")
+    c2.metric("Percentil no histórico",
+              f"P{diag.target_pct:.0f}" if pd.notna(diag.target_pct) else "—",
+              help="Onde o valor do dia cai dentro de todo o histórico: "
+                   "P50 = mediana; P95 = entre os 5% mais altos.")
+    c3.metric("Histórico usado", f"{diag.n_history} períodos")
+
+    if diag.rows is not None and not diag.rows.empty:
+        fig_diag = pp.fig_day_diagnosis(diag.rows, _fmt_day(dia))
+        st.plotly_chart(fig_diag, use_container_width=True)
+        tabela = diag.rows.drop(columns=["parametro"])
+        st.dataframe(tabela, use_container_width=True)
+    else:
+        fig_diag, tabela = None, None
+        st.info("Sem contribuintes calculáveis para este dia.")
+
+    for f in diag.findings:
+        st.markdown(f"- {f}")
+    for c in diag.cautions:
+        st.caption(f"⚠️ {c}")
+
+    item_id = hashlib.md5(
+        f"m2diag|{result.target}|{dia}".encode()
+    ).hexdigest()[:12]
+    figures = {"contribuintes do dia": fig_diag} if fig_diag else {}
+    tables = {"Diagnóstico do dia": tabela} if tabela is not None else {}
+    add_to_report_button(
+        {
+            "id": item_id,
+            "module": "Módulo 2 — Diagnóstico do dia",
+            "title": f"Diagnóstico de {_fmt_day(dia)} — '{result.target}'",
+            "texts": diag.findings + [f"Atenção: {c}" for c in diag.cautions],
+            "tables": tables,
+            "figures": figures,
+        },
+        key=f"add_{item_id}",
+    )

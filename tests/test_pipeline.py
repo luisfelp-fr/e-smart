@@ -60,6 +60,41 @@ def test_efeito_direto_vs_indireto_em_cadeia():
     assert "B" in str(efeitos["A"])
 
 
+def test_diagnostico_do_dia_aponta_contribuinte_extremo():
+    # 'driver' move o alvo; no último dia ele está extremo -> deve liderar o
+    # diagnóstico do dia com empurrão para CIMA; 'ruido' não deve contribuir
+    from causal_analysis.day_diagnosis import diagnose_day
+    from causal_analysis.pipeline import analyze_dataframe
+
+    rng = np.random.default_rng(7)
+    n = 120
+    driver = rng.normal(50, 5, n)
+    driver[-1] = driver.max() + 25          # dia extremo (P100)
+    alvo = 2.0 * driver + rng.normal(0, 3, n)
+    df = pd.DataFrame(
+        {"driver": driver, "ruido": rng.normal(0, 1, n), "alvo": alvo},
+        index=pd.date_range("2025-01-01", periods=n, freq="D"),
+    )
+    res = analyze_dataframe(df, "alvo", max_lag=5, verbose=False)
+    diag = diagnose_day(res, df.index[-1])
+
+    assert diag.n_history == n
+    assert diag.target_pct > 95                    # alvo do dia ficou altíssimo
+    top = diag.rows.iloc[0]
+    assert "driver" in top["indicador"]
+    assert top["percentil no dia"] >= 99
+    assert top["empurrão esperado"] == "alvo para CIMA"
+    assert top["score do dia"] > 30
+    # frases citam o contribuinte e a cautela está presente
+    assert any("driver" in f for f in diag.findings)
+    assert any("não prova causal" in c for c in diag.cautions)
+    # dia típico: nada deve ser apontado com empurrão
+    meio = df.index[60]
+    diag2 = diagnose_day(res, meio)
+    linha_driver = diag2.rows[diag2.rows["indicador"].str.contains("driver")]
+    assert linha_driver.iloc[0]["score do dia"] <= diag.rows.iloc[0]["score do dia"]
+
+
 def test_pipeline_identifica_causas_e_gera_relatorio():
     with tempfile.TemporaryDirectory() as tmp:
         csv = os.path.join(tmp, "dados.csv")

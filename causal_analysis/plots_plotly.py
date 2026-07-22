@@ -96,6 +96,51 @@ def fig_ranking(scores: pd.DataFrame, top: int = 15) -> go.Figure:
     return fig
 
 
+def fig_day_diagnosis(rows: pd.DataFrame, day_label: str) -> go.Figure:
+    """Barras do 'score do dia' (ranking histórico × atipicidade do dia).
+
+    Azul = empurrão esperado para cima; vermelho = para baixo; cinza =
+    dentro do típico / efeito não-monotônico.
+    """
+    data = rows.head(10).iloc[::-1]
+
+    def cor(push: str) -> str:
+        if str(push).endswith("CIMA"):
+            return POS
+        if str(push).endswith("BAIXO"):
+            return NEG
+        return MUTED
+
+    colors = [cor(p) for p in data["empurrão esperado"]]
+    hover = [
+        (f"<b>{r['indicador']}</b><br>valor no dia: {r['valor no dia']:.4g}"
+         f"<br>percentil no dia: {r['percentil no dia']}"
+         f"<br>desvio: {r['desvio']}<br>empurrão: {r['empurrão esperado']}"
+         f"<br>score histórico: {r['score histórico']:.0f}/100"
+         f"<br>versão avaliada: {r['versão avaliada']}")
+        for _, r in data.iterrows()
+    ]
+    fig = go.Figure(go.Bar(
+        x=data["score do dia"], y=data["indicador"], orientation="h",
+        marker=dict(color=colors),
+        text=[f"{v:.0f}" for v in data["score do dia"]],
+        textposition="outside", textfont=dict(size=11, color=INK_2),
+        hovertext=hover, hoverinfo="text",
+    ))
+    fig.update_layout(
+        title=f"Prováveis contribuintes do dia — {day_label}"
+              "<br><sup>score do dia = influência histórica × atipicidade no "
+              "dia · azul = empurra o alvo para cima · vermelho = para baixo "
+              "· cinza = típico/não-monotônico</sup>",
+        xaxis=dict(title="Score do dia (0–100)", range=[0, 108]),
+        height=max(320, 36 * len(data) + 150),
+        showlegend=False, **_LAYOUT,
+    )
+    _base_axes(fig)
+    fig.update_yaxes(gridcolor=SURFACE, automargin=True, ticksuffix="  ")
+    return fig
+
+
 def fig_corr_heatmap(df: pd.DataFrame, target: str, max_cols: int = 25) -> go.Figure:
     """Mapa de calor de Spearman (divergente vermelho-cinza-azul)."""
     cols = [target] + [c for c in df.columns if c != target][: max_cols - 1]

@@ -230,7 +230,7 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
             rep.cautions.append(
                 "Efeito 'indireto (via X)' é um INDÍCIO de mediação: a "
                 "associação com o alvo enfraquece quando se desconta X "
-                "(correlação parcial). Priorize investigar X na cadeia."
+                "(correlação parcial). Priorize investigar X."
             )
     rep.ranking_table = tab[cols].rename(columns={"confianca": "confiança"})
     return rep
