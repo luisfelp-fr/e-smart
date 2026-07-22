@@ -14,7 +14,12 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from causal_analysis.aggregation import AlignmentInfo, align_sheets
-from shared.parsing import detect_time_column, read_all_sheets, to_numeric
+from shared.parsing import (
+    datelike_columns,
+    detect_time_column,
+    read_all_sheets,
+    to_numeric,
+)
 
 
 @dataclass
@@ -45,6 +50,8 @@ def load_sheet_frame(
         df = df[df.index.notna()].sort_index()
         dup = int(df.index.duplicated().sum())
         if dup:
+            # converte ANTES de agregar: mean sobre strings ("10,5") quebraria
+            df = df.apply(to_numeric)
             df = df.groupby(level=0).mean(numeric_only=False)
             info.notes.append(f"{dup} data(s) duplicada(s) agregadas pela média.")
     else:
@@ -52,6 +59,13 @@ def load_sheet_frame(
         info.notes.append(
             f"Aba '{name}' sem coluna de tempo; usando sequência 1..N."
         )
+        hints = datelike_columns(df)
+        if hints:
+            info.notes.append(
+                f"Na aba '{name}', a coluna '{hints[0]}' parece conter datas "
+                "— para usá-la como eixo temporal, deixe-a como PRIMEIRA "
+                "coluna da aba."
+            )
 
     for col in list(df.columns):
         df[col] = to_numeric(df[col])

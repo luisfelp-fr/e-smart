@@ -227,6 +227,50 @@ def test_loader_ods(tmp_path):
     assert df["vazao"].notna().sum() == 4
 
 
+def test_loader_data_duplicada_com_virgula_decimal(tmp_path):
+    # regressão: mean sobre strings quebrava quando havia data duplicada
+    p = tmp_path / "dup.csv"
+    p.write_text("data;v\n01/06/2024;10,0\n01/06/2024;12,0\n"
+                 "02/06/2024;11,0\n03/06/2024;9,5\n")
+    df, diag = load_indicator_table(str(p))
+    assert df["v"].iloc[0] == 11.0  # média das duplicadas (10+12)/2
+    assert any("duplicada" in n for n in diag.notes)
+    # mesmo caminho no loader do Módulo 2
+    from shared.io_loader import load_workbook
+    frames, infos = load_workbook(str(p))
+    assert next(iter(frames.values()))["v"].iloc[0] == 11.0
+
+
+def test_loader_csv_uma_coluna_decimal_virgula(tmp_path):
+    # regressão: o sniffer confundia a vírgula decimal com separador
+    p = tmp_path / "umacol.csv"
+    p.write_text("v\n10,5\nN/A\n11,2\n-\n12,8\n1.234,5\n9,9\n10,1\n")
+    df, _ = load_indicator_table(str(p))
+    assert list(df.columns) == ["v"]
+    assert df["v"].notna().sum() == 6
+    assert df["v"].max() == 1234.5
+
+
+def test_to_numeric_percentual():
+    from shared.parsing import to_numeric
+    br = to_numeric(pd.Series(["85,3%", "90,0%", "x", "78,1%"]))
+    assert br.notna().sum() == 3 and abs(br.iloc[0] - 85.3) < 1e-9
+    us = to_numeric(pd.Series(["85.3%", "90.0%", "78.1%"]))
+    assert abs(us.iloc[0] - 85.3) < 1e-9  # decimal ponto com % não vira 853
+
+
+def test_dica_data_fora_da_primeira_coluna(tmp_path):
+    p = tmp_path / "data3.csv"
+    linhas = ["v1;quando"] + [
+        f"1,{i};{d}" for i, d in enumerate(
+            pd.date_range('2024-01-01', periods=10).strftime('%d/%m/%Y'))
+    ]
+    p.write_text("\n".join(linhas) + "\n")
+    df, diag = load_indicator_table(str(p))
+    assert not diag.has_dates  # detector oficial só olha a 1ª coluna
+    assert any("PRIMEIRA coluna" in n for n in diag.notes)  # mas avisa
+
+
 def test_faltantes_interpolacao_e_mediana():
     vals = [1.0, 2.0, np.nan, 4.0, 5.0, np.nan, np.nan, np.nan, np.nan, 10.0]
     x = _serie(vals)

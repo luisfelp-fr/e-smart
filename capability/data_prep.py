@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from shared.parsing import parse_dates, read_raw, to_numeric
+from shared.parsing import datelike_columns, parse_dates, read_raw, to_numeric
 
 SEQ_INDEX_NAME = "ordem"
 
@@ -101,6 +101,8 @@ def load_indicator_table(
         df = df[df.index.notna()].sort_index()
         dup = int(df.index.duplicated().sum())
         if dup:
+            # converte ANTES de agregar: mean sobre strings ("10,5") quebraria
+            df = df.apply(to_numeric)
             df = df.groupby(level=0).mean(numeric_only=False)
             diag.notes.append(f"{dup} data(s) duplicada(s) foram agregadas pela média.")
     else:
@@ -111,6 +113,13 @@ def load_indicator_table(
             "Nenhuma coluna de data/tempo identificada; usando sequência "
             "numérica crescente iniciando em 1 como eixo temporal."
         )
+        # dica: o detector só olha a 1ª coluna — avisa se há datas em outra
+        hints = datelike_columns(df, exclude=(candidate,) if candidate else ())
+        if hints:
+            diag.notes.append(
+                f"A coluna '{hints[0]}' parece conter datas — para usá-la "
+                "como eixo temporal, deixe-a como PRIMEIRA coluna da planilha."
+            )
 
     # conversão numérica coluna a coluna (decimal com vírgula suportado)
     for col in list(df.columns):
