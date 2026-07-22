@@ -88,6 +88,12 @@ PDF** (uma seção por análise, com textos, tabelas e imagens dos gráficos).
 > **Deploy no Streamlit:** a branch de referência do app é a **`main`** —
 > aponte o Streamlit Cloud para ela; toda melhoria é entregue lá.
 
+> **Bot keep-alive:** o workflow `.github/workflows/keep-alive.yml` visita o
+> app a cada 6 h com navegador headless e o acorda se estiver hibernado
+> (crons rodam na branch padrão do GitHub — recomenda-se defini-la como
+> `main` em Settings). O GitHub pausa crons após ~60 dias sem atividade no
+> repositório; reative na aba Actions. Em falha, o dono recebe e-mail.
+
 ## Desempenho com muitos dados
 
 O app foi endurecido para bases grandes (ex.: dezenas de indicadores minuto a
