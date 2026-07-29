@@ -18,6 +18,7 @@ for p in (_ROOT, os.path.dirname(os.path.abspath(__file__))):
 
 import streamlit as st  # noqa: E402
 
+from page_analytics import render_analytics  # noqa: E402
 from page_module1 import render_module1  # noqa: E402
 from page_module2 import render_module2  # noqa: E402
 from report_builder import render_report_page  # noqa: E402
@@ -61,6 +62,7 @@ def main() -> None:
             "Navegação",
             ["📊 Módulo 1 — Capabilidade",
              "🔎 Módulo 2 — Influência no alvo",
+             "📈 Analytics",
              "📄 Relatório"],
             key="nav",
             label_visibility="collapsed",
@@ -71,12 +73,16 @@ def main() -> None:
         st.divider()
         with st.expander("ℹ️ Como usar"):
             st.markdown(
-                "1. **Carregue** sua planilha acima.\n"
+                "1. **Carregue** sua planilha acima — ela vira a base de "
+                "todos os módulos; em cada um você só escolhe a aba e o "
+                "indicador.\n"
                 "2. **Módulo 1**: escolha um indicador e informe os limites "
                 "de atuação para verificar se o processo é capaz.\n"
                 "3. **Módulo 2**: escolha a variável alvo para descobrir "
                 "quais indicadores mais a impactam.\n"
-                "4. Em cada análise, clique em **Adicionar ao relatório** e "
+                "4. **Analytics**: análises estatísticas guiadas "
+                "(descritiva, correlação, regressão, CEP, outliers etc.).\n"
+                "5. Em cada análise, clique em **Adicionar ao relatório** e "
                 "baixe tudo em PDF na página Relatório."
             )
 
@@ -84,6 +90,8 @@ def main() -> None:
         render_module1(file_path)
     elif page.startswith("🔎"):
         render_module2(file_path)
+    elif page.startswith("📈"):
+        render_analytics(file_path)
     else:
         render_report_page()
 

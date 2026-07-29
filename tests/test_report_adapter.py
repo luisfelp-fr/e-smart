@@ -73,6 +73,17 @@ def test_item_adaptado_passa_pelo_relatorio_html_e_pdf():
     assert isinstance(pdf, bytes) and pdf.startswith(b"%PDF")
 
 
+def test_variaveis_em_lista_formatadas_no_titulo():
+    item = adapt_report_item(
+        {"name": "Estatística Descritiva",
+         "variables": {"variáveis": ["Vazao", "Pressao"]},
+         "params": {}, "interpretation": "x", "figures": [], "tables": {},
+         "timestamp": ""}
+    )
+    assert item["title"] == "Estatística Descritiva — Vazao, Pressao"
+    assert any("variáveis: Vazao, Pressao" in t for t in item["texts"])
+
+
 def test_item_minimo_sem_figuras_nem_tabelas():
     minimal = adapt_report_item(
         {"name": "Estatística Descritiva", "variables": {}, "params": {},

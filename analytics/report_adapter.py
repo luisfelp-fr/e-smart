@@ -31,6 +31,13 @@ def stable_id(item: dict[str, Any]) -> str:
     return "ax" + hashlib.md5(payload.encode("utf-8")).hexdigest()[:10]
 
 
+def _fmt(value: Any) -> str:
+    """Valores de variáveis/parâmetros legíveis (listas viram "a, b, c")."""
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
 def adapt_report_item(item: dict[str, Any]) -> dict[str, Any]:
     """Converte um item do formato Argus para o esquema do relatório do e-smart."""
     variables = dict(item.get("variables") or {})
@@ -39,9 +46,9 @@ def adapt_report_item(item: dict[str, Any]) -> dict[str, Any]:
     texts = [
         t for t in (
             str(item.get("interpretation") or ""),
-            "Variáveis: " + "; ".join(f"{k}: {v}" for k, v in variables.items())
+            "Variáveis: " + "; ".join(f"{k}: {_fmt(v)}" for k, v in variables.items())
             if variables else "",
-            "Parâmetros: " + "; ".join(f"{k}: {v}" for k, v in params.items())
+            "Parâmetros: " + "; ".join(f"{k}: {_fmt(v)}" for k, v in params.items())
             if params else "",
             f"Gerado em {item['timestamp']}." if item.get("timestamp") else "",
         ) if t
@@ -55,7 +62,7 @@ def adapt_report_item(item: dict[str, Any]) -> dict[str, Any]:
 
     title = name
     if variables:
-        title += " — " + ", ".join(str(v) for v in variables.values())
+        title += " — " + ", ".join(_fmt(v) for v in variables.values())
 
     return {
         "id": stable_id(item),
