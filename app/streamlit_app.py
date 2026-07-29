@@ -43,19 +43,31 @@ def main() -> None:
                  "aceitos. Excel pode ter várias abas, cada uma com uma "
                  "série temporal diferente.",
         )
-        file_path = save_upload(uploaded) if uploaded else None
+        # A planilha carregada vira a base compartilhada de todos os módulos:
+        # o caminho fica na sessão e cada página só seleciona aba e indicador.
         if uploaded:
+            file_path = save_upload(uploaded)
+            if st.session_state.get("file_path") != file_path:
+                # arquivo novo: descarta a base derivada da aba Analytics
+                for k in [k for k in st.session_state if str(k).startswith("ax_")]:
+                    st.session_state.pop(k)
+            st.session_state["file_path"] = file_path
+            st.session_state["uploaded_name"] = uploaded.name
             st.success(f"✓ {uploaded.name}")
+        file_path = st.session_state.get("file_path")
 
         st.divider()
-        n_report = len(st.session_state.get("report_items", []))
         page = st.radio(
             "Navegação",
             ["📊 Módulo 1 — Capabilidade",
              "🔎 Módulo 2 — Influência no alvo",
-             f"📄 Relatório ({n_report})"],
+             "📄 Relatório"],
+            key="nav",
             label_visibility="collapsed",
         )
+        n_report = len(st.session_state.get("report_items", []))
+        if n_report:
+            st.caption(f"📑 {n_report} análise(s) no relatório")
         st.divider()
         with st.expander("ℹ️ Como usar"):
             st.markdown(

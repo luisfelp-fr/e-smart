@@ -8,10 +8,9 @@ import numpy as np
 import streamlit as st
 
 from capability import charts
-from capability.data_prep import load_indicator_table
 from capability.indices import TOOLTIPS
 from capability.pipeline import run_capability
-from shared.parsing import read_all_sheets
+from data_store import get_all_sheets, get_indicator_table
 from ui_components import add_to_report_button, fmt_br, metric_row, parse_br_number
 
 _OUTLIER_OPTIONS = {
@@ -41,7 +40,7 @@ def render_module1(file_path: str | None) -> None:
         return
 
     # ---- seleção de aba e indicador -----------------------------------
-    sheets = read_all_sheets(file_path)
+    sheets = get_all_sheets(file_path)
     sheet_name = (
         st.selectbox(
             "Aba da planilha", list(sheets),
@@ -51,7 +50,7 @@ def render_module1(file_path: str | None) -> None:
         if len(sheets) > 1 else next(iter(sheets))
     )
     try:
-        df, diag = load_indicator_table(file_path, sheet=sheet_name)
+        df, diag = get_indicator_table(file_path, sheet_name)
     except ValueError as e:
         st.error(str(e))
         return
