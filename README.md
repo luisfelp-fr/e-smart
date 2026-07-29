@@ -13,6 +13,9 @@ streamlit run app/streamlit_app.py
 ## Entrada de dados
 
 - Planilha **CSV ou Excel** (`.xlsx/.xls/.xlsm/.ods`), carregada na barra lateral.
+- O upload é feito **uma única vez**: a planilha vira a **base compartilhada de
+  todos os módulos** (lida com cache, sem re-parse a cada interação) — em cada
+  módulo você só seleciona a **aba** e o **indicador**.
 - **Decimal com vírgula** (`12,5`) e datas brasileiras (`dd/mm/aaaa`) são
   detectados automaticamente, assim como o separador (`;`, `,` ou tab).
 - A coluna de data/hora é **opcional**: sem ela, o app usa a ordem das linhas
@@ -76,6 +79,32 @@ pensado para dados industriais, que raramente são lineares ou normais.
   histórico, avaliado na melhor transformação temporal). Indicado para o uso
   "indicadores minuto a minuto + alvo diário": a aba do alvo diário define a
   grade e os minutos viram métricas por dia automaticamente.
+
+## Aba 📈 Analytics — análises estatísticas guiadas
+
+Réplica do **Argus Analytics** integrada ao app: uma home com cards abre 13
+telas de análise dedicadas, cada uma com seleção simples de variáveis,
+tooltips de glossário e **interpretação automática em linguagem simples**:
+
+- **Visão Geral dos Dados** (prévia + diagnóstico automático dos tipos de
+  coluna: numérica, categórica, data/hora, texto), **Qualidade dos Dados**
+  (ausentes, duplicidades, colunas constantes) e **Outliers** (IQR, Z-score e
+  MAD, com download da base filtrada e opção de **usar a base sem outliers
+  nas demais análises da aba**, reversível).
+- **Estatística Descritiva**, **Distribuição** (histograma, boxplot,
+  densidade, assimetria/curtose) e **Teste de Normalidade** (Shapiro-Wilk e
+  Anderson-Darling).
+- **Correlação** (Pearson/Spearman/Kendall, heatmap e ranking de pares),
+  **Regressão** (OLS simples/múltipla) e **Comparação entre Grupos** (t,
+  Mann-Whitney, ANOVA ou Kruskal-Wallis, sugerido conforme a normalidade).
+- **CEP** (carta de individuais com limites ±3σ), **Capabilidade Cp/Cpk**
+  (fluxo guiado com transformações Box-Cox/Johnson/log/…), **Análise
+  Temporal** (reamostragem + média móvel + tendência) e **Análise com Lag**
+  (correlação cruzada com validação ARIMAX/Ljung-Box).
+
+A base é a **mesma planilha da barra lateral** (basta escolher a aba no topo)
+e o botão "➕ Adicionar ao relatório" alimenta o **mesmo relatório unificado**
+dos Módulos 1 e 2.
 
 ## Relatório
 
