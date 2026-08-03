@@ -41,11 +41,19 @@ def _latin1(text) -> str:
     return t.encode("latin-1", "ignore").decode("latin-1")
 
 
-def _png_of(fig) -> bytes | None:
-    """Converte figura Plotly em PNG; None se o ambiente não suportar."""
+def _png_of(fig, errors: list[str] | None = None) -> bytes | None:
+    """Converte figura Plotly em PNG; None se o ambiente não suportar.
+
+    Cada chamada dirige um Chromium headless (exigência do kaleido ≥ v1).
+    O motivo da falha é registrado em ``errors`` para a página avisar o
+    usuário: antes a exceção era engolida e o relatório saía sem gráficos,
+    sem nenhuma explicação de por quê.
+    """
     try:
         return fig.to_image(format="png", width=980, height=560, scale=2)
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - qualquer falha vira PDF sem imagem
+        if errors is not None:
+            errors.append(f"{type(e).__name__}: {e}")
         return None
 
 
@@ -99,11 +107,14 @@ def _render_table(pdf: _ReportPDF, name: str, df: pd.DataFrame) -> None:
     pdf.ln(4)
 
 
-def build_pdf(items: list[dict]) -> bytes:
+def build_pdf(items: list[dict], errors: list[str] | None = None) -> bytes:
     """Monta o arquivo .pdf do relatório a partir dos itens marcados.
 
     Cada item: {id, module, title, texts: [str], tables: {nome: DataFrame},
     figures: {nome: go.Figure}}.
+
+    ``errors`` recebe as falhas de renderização de gráfico, para a página
+    poder dizer ao usuário que o PDF saiu só com textos e tabelas.
     """
     pdf = _ReportPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=18)
@@ -158,7 +169,7 @@ def build_pdf(items: list[dict]) -> bytes:
         img_w = pdf.epw
         img_h = img_w * 560.0 / 980.0
         for name, fig in it.get("figures", {}).items():
-            png = _png_of(fig)
+            png = _png_of(fig, errors)
             if png is None:
                 continue
             if pdf.get_y() + img_h + 8 > pdf.page_break_trigger:

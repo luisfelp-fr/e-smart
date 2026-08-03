@@ -22,6 +22,7 @@ from page_analytics import render_analytics  # noqa: E402
 from page_module1 import render_module1  # noqa: E402
 from page_module2 import render_module2  # noqa: E402
 from report_builder import render_report_page  # noqa: E402
+from shared.limits import limits_summary, queue_note  # noqa: E402
 from ui_components import save_upload  # noqa: E402
 
 st.set_page_config(
@@ -71,6 +72,9 @@ def main() -> None:
         if n_report:
             st.caption(f"📑 {n_report} análise(s) no relatório")
         st.divider()
+        fila = queue_note()
+        if fila:
+            st.info(f"⏳ Análises em andamento — {fila}.", icon="⏳")
         with st.expander("ℹ️ Como usar"):
             st.markdown(
                 "1. **Carregue** sua planilha acima — ela vira a base de "
@@ -85,6 +89,7 @@ def main() -> None:
                 "5. Em cada análise, clique em **Adicionar ao relatório** e "
                 "baixe tudo em PDF na página Relatório."
             )
+        st.caption(f":gray[Capacidade: {limits_summary()}]")
 
     if page.startswith("📊"):
         render_module1(file_path)

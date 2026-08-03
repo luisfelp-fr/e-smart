@@ -12,6 +12,7 @@ from causal_analysis import plots_plotly as pp
 from causal_analysis.aggregation import reduce_to_scale
 from causal_analysis.managerial_report import build_managerial_report
 from causal_analysis.pipeline import analyze_dataframe
+from shared.limits import Busy, heavy_slot, queue_note
 from shared.io_loader import load_workbook, prepare_analysis_frame
 from ui_components import add_to_report_button
 
@@ -26,15 +27,9 @@ def _sheet_meta(file_path: str) -> dict[str, dict]:
     }
 
 
-# cache_resource (e não cache_data): evita re-desserializar por pickle o
-# DataFrame + resultado a cada rerun, e max_entries=1 mantém UMA análise em
-# memória — essencial para não estourar a RAM do Streamlit Cloud. Os objetos
-# retornados são tratados como somente-leitura pela página.
-@st.cache_resource(
-    max_entries=1,
-    show_spinner="Analisando os dados — isso pode levar alguns instantes...",
-)
-def _run(file_path: str, target: str, max_lag: int, alpha: float, max_rows: int):
+def _compute(file_path: str, target: str, max_lag: int, alpha: float,
+             max_rows: int):
+    """A análise em si — cara, minutos de CPU. Chamada sob controle de fila."""
     df, align, _sheet_infos = prepare_analysis_frame(file_path, target)
     df, scale_note = reduce_to_scale(df, max_rows=max_rows)
     result = analyze_dataframe(df, target, max_lag=max_lag, alpha=alpha,
@@ -42,6 +37,47 @@ def _run(file_path: str, target: str, max_lag: int, alpha: float, max_rows: int)
     del df  # result.df já contém a versão usada pela página
     gc.collect()
     return align, result, scale_note
+
+
+def _run(file_path: str, target: str, max_lag: int, alpha: float, max_rows: int):
+    """Resultado da análise, guardado POR SESSÃO.
+
+    Antes isto era ``@st.cache_resource(max_entries=1)``. Os caches do
+    Streamlit são globais ao processo, então com várias pessoas usando o app
+    ao mesmo tempo aquilo tinha três defeitos somados:
+
+    - com um único slot, cada análise nova **apagava a da pessoa anterior**,
+      que recalculava tudo ao clicar em qualquer aba do resultado;
+    - chaves iguais **serializam sob lock**: quem pedisse a mesma análise
+      ficava preso durante o Random Forest de outra pessoa;
+    - ``cache_resource`` devolve **o mesmo objeto por referência** a todas as
+      sessões, então bastava uma escrita distraída em ``result.df`` para
+      corromper o resultado alheio.
+
+    Guardar na sessão troca isso por isolamento real: cada pessoa tem o seu.
+    O custo é RAM proporcional a sessões ativas — por isso guardamos apenas
+    UM resultado por sessão e liberamos o anterior antes de calcular o novo.
+    """
+    sig = (file_path, target, max_lag, alpha, max_rows)
+    cached = st.session_state.get("m2_result")
+    if cached and cached[0] == sig:
+        return cached[1]
+
+    # libera o resultado anterior ANTES de calcular o novo, para o pico de
+    # memória não ser o dobro
+    st.session_state.pop("m2_result", None)
+    gc.collect()
+
+    note = queue_note()
+    spinner = "Analisando os dados — isso pode levar alguns instantes..."
+    if note:
+        spinner = f"Na fila ({note}) — a análise começa assim que liberar..."
+    with st.spinner(spinner):
+        with heavy_slot():
+            out = _compute(file_path, target, max_lag, alpha, max_rows)
+
+    st.session_state["m2_result"] = (sig, out)
+    return out
 
 
 def render_module2(file_path: str | None) -> None:
@@ -111,19 +147,34 @@ def render_module2(file_path: str | None) -> None:
             icon="⚙️",
         )
 
-    if not st.button("▶️ Analisar", type="primary"):
-        if "m2_last" in st.session_state:
-            pass  # cai para reexibir a última análise abaixo
-        else:
-            return
+    run_clicked = st.button("▶️ Analisar", type="primary")
+    sig = (file_path, target, max_lag, alpha, max_rows)
+    cached = st.session_state.get("m2_result")
 
-    try:
-        align, result, scale_note = _run(
-            file_path, target, max_lag, alpha, max_rows)
-        st.session_state["m2_last"] = (file_path, target, max_lag, alpha)
-    except ValueError as e:
-        st.error(str(e))
-        return
+    if not run_clicked:
+        # Reexibe o resultado já calculado — mas só se as opções não mudaram.
+        # Antes a página caía direto na análise quando havia resultado
+        # anterior, então mexer num slider disparava minutos de recálculo sem
+        # ninguém ter pedido.
+        if cached and cached[0] == sig:
+            align, result, scale_note = cached[1]
+        else:
+            if cached:
+                st.info(
+                    "As opções mudaram. Clique em **▶️ Analisar** para "
+                    "recalcular com os novos parâmetros.", icon="⚙️",
+                )
+            return
+    else:
+        try:
+            align, result, scale_note = _run(
+                file_path, target, max_lag, alpha, max_rows)
+        except Busy as e:
+            st.warning(str(e), icon="⏳")
+            return
+        except ValueError as e:
+            st.error(str(e))
+            return
 
     if scale_note:
         st.success(f"⚙️ {scale_note}", icon="✅")

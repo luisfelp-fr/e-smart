@@ -8,6 +8,7 @@ A importância por permutação é medida somente em blocos de teste futuros
 
 from __future__ import annotations
 
+import os
 import warnings
 from dataclasses import dataclass, field
 
@@ -21,6 +22,25 @@ from sklearn.model_selection import TimeSeriesSplit
 from .features import base_param, build_matrix, feature_label
 
 RNG_SEED = 42
+
+
+def _rf_jobs() -> int:
+    """Núcleos por floresta — conservador de propósito.
+
+    Com ``n_jobs=-1`` cada análise toma TODOS os núcleos. Isso é ótimo com um
+    usuário e destrutivo com vários: cinco análises simultâneas numa máquina
+    de 8 núcleos viram 40 threads disputando 8, e o tempo total piora para
+    todo mundo. O padrão deixa folga para as outras sessões; quem roda o app
+    sozinho pode subir com ESMART_RF_JOBS (-1 = todos).
+    """
+    raw = os.environ.get("ESMART_RF_JOBS")
+    if raw:
+        try:
+            n = int(raw)
+            return n if n != 0 else 1
+        except ValueError:
+            pass
+    return max(1, (os.cpu_count() or 2) // 4)
 
 
 @dataclass
@@ -63,9 +83,9 @@ def ml_importance(
 ) -> MLResult:
     """Treina RF em janelas crescentes e agrega importâncias por parâmetro."""
     res = MLResult()
-    X, y, groups = build_matrix(df, target, max_lag, windows)
     # float32: metade da memória da matriz sem efeito prático no ranking
-    X = X.astype(np.float32)
+    # (build_matrix já devolve X em float32)
+    X, y, groups = build_matrix(df, target, max_lag, windows)
     y = y.astype(np.float32)
     res.n_features, res.n_obs = X.shape[1], len(X)
     if len(X) < 60:
@@ -81,6 +101,7 @@ def ml_importance(
         n_splits = min(n_splits, 3)
     n_splits = min(n_splits, max(2, len(X) // 40))
     splitter = TimeSeriesSplit(n_splits=n_splits)
+    rf_jobs = _rf_jobs()
     imp_acc = np.zeros(X.shape[1])
     imp_sq = np.zeros(X.shape[1])
     n_folds_used = 0
@@ -93,7 +114,7 @@ def ml_importance(
             min_samples_leaf=3,
             max_features="sqrt",
             random_state=RNG_SEED,
-            n_jobs=-1,
+            n_jobs=rf_jobs,
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
