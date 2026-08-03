@@ -53,7 +53,7 @@ def restore_original_base() -> None:
         st.session_state["ax_df"] = st.session_state.pop("ax_df_original")
         st.session_state["ax_col_types"] = st.session_state.pop("ax_col_types_original")
     st.session_state["ax_outliers_applied"] = False
-    st.session_state.pop("ax_df_no_outliers", None)
+    st.session_state.pop("ax_out_export", None)
     st.session_state.pop("ax_outliers_removed_log", None)
 
 
@@ -173,14 +173,25 @@ def render(state) -> None:
 
         clean_idx = series.index[~mask]
         cleaned = df.loc[df.index.isin(clean_idx) | df[col].isna()].copy()
-        st.session_state["ax_df_no_outliers"] = cleaned
         n_removed = len(df) - len(cleaned)
         st.caption(f"Resultado: **{len(cleaned)} linhas** (removidas {n_removed}).")
+
+        # Serializar Excel + CSV custa caro e o Streamlit reexecuta a tela
+        # inteira a cada clique em qualquer widget. Sem este cache por sessão,
+        # a base era serializada duas vezes por interação, mesmo sem ninguém
+        # baixar nada.
+        sig = f"{state.get('file_name')}|{col}|{method_label}|{len(df)}|{len(cleaned)}"
+        cache = st.session_state.get("ax_out_export")
+        if not cache or cache[0] != sig:
+            cache = (sig, _to_excel_bytes(cleaned),
+                     cleaned.to_csv(index=False).encode("utf-8-sig"))
+            st.session_state["ax_out_export"] = cache
+        _, xlsx_bytes, csv_bytes = cache
 
         d1, d2, d3 = st.columns(3)
         d1.download_button(
             "📥 Baixar (Excel)",
-            data=_to_excel_bytes(cleaned),
+            data=xlsx_bytes,
             file_name=f"base_sem_outliers_{col}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
@@ -188,7 +199,7 @@ def render(state) -> None:
         )
         d2.download_button(
             "📥 Baixar (CSV)",
-            data=cleaned.to_csv(index=False).encode("utf-8-sig"),
+            data=csv_bytes,
             file_name=f"base_sem_outliers_{col}.csv",
             mime="text/csv",
             use_container_width=True,

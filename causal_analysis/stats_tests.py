@@ -256,15 +256,18 @@ def direct_effect_flags(
         return {}
 
     # melhor versão temporal de cada parâmetro, alinhada ao alvo
-    from .features import derived_features
+    from .features import single_feature
 
     def best_series(p: str) -> pd.Series:
         feat = per_param.get(p, {}).get("best_feature") or p
         if feat != p:
-            # a melhor versão é derivada (lag/média móvel): recria a família
-            fam = derived_features(df[p], 30, [3, 7, 14])
-            if feat in fam.columns:
-                return fam[feat]
+            # a melhor versão é derivada (lag/média móvel): recria só ela.
+            # Antes isto montava a família inteira com max_lag fixo em 30 —
+            # 34 colunas por parâmetro, no laço drop-one do top-10, para usar
+            # uma; e o 30 fixo ignorava o max_lag escolhido pelo usuário.
+            s = single_feature(df[p], feat)
+            if s is not None:
+                return s
         return df[p]
 
     series = {p: best_series(p) for p in head}

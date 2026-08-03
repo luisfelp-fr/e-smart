@@ -9,6 +9,7 @@ Cada parâmetro gera uma família de séries derivadas:
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 LAG_SEP = "__lag"
@@ -27,6 +28,36 @@ def derived_features(x: pd.Series, max_lag: int, windows: list[int]) -> pd.DataF
     return pd.DataFrame(out)
 
 
+def single_feature(x: pd.Series, feature_name: str) -> pd.Series | None:
+    """Recria UMA série derivada pelo nome, sem montar a família inteira.
+
+    Usado por quem já sabe qual transformação quer (ex.: a "melhor versão"
+    escolhida pelo ranking). Montar a família toda para descartar 33 das 34
+    colunas é desperdício puro — e pior, obriga quem chama a adivinhar o
+    ``max_lag`` usado na varredura.
+
+    Devolve ``None`` se o nome não corresponder a uma derivação desta série.
+    """
+    name = str(x.name)
+    if feature_name == name:
+        return x
+    for sep, build in (
+        (LAG_SEP, lambda k: x.shift(k)),
+        (ROLL_SEP, lambda w: x.rolling(w, min_periods=max(2, w // 2)).mean()),
+    ):
+        base, found, arg = feature_name.partition(sep)
+        if not found or base != name:
+            continue
+        try:
+            n = int(arg)
+        except ValueError:
+            return None
+        if sep is ROLL_SEP and n < 2:
+            return None
+        return build(n)
+    return None
+
+
 def build_matrix(
     df: pd.DataFrame, target: str, max_lag: int, windows: list[int]
 ) -> tuple[pd.DataFrame, pd.Series, dict[str, list[str]]]:
@@ -38,7 +69,10 @@ def build_matrix(
     frames = []
     groups: dict[str, list[str]] = {}
     for p in params:
-        fam = derived_features(df[p], max_lag, windows)
+        # float32 já na origem: a matriz tem (1 + max_lag + |windows|) colunas
+        # por parâmetro e é o pico de memória da análise. Montar em float64
+        # para converter depois alocava as duas versões ao mesmo tempo.
+        fam = derived_features(df[p], max_lag, windows).astype(np.float32)
         frames.append(fam)
         groups[p] = list(fam.columns)
     X = pd.concat(frames, axis=1)

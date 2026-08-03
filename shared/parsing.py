@@ -61,6 +61,23 @@ def _detect_sep(path: str) -> str | None:
     return ";"  # coluna única: qualquer separador ausente serve
 
 
+def _read_csv(path: str, sep: str) -> pd.DataFrame:
+    """Lê CSV pelo engine C, caindo para o Python só se ele recusar.
+
+    ``_detect_sep`` sempre devolve um separador de UM caractere, que é
+    exatamente o caso que o engine C atende — e ele é da ordem de 5 a 20×
+    mais rápido que o engine Python, além de gastar menos memória. Isso está
+    no caminho de toda leitura de planilha que não está em cache, então com
+    várias pessoas usando arquivos diferentes é o custo dominante de I/O.
+    """
+    try:
+        return pd.read_csv(path, sep=sep, engine="c")
+    except (ValueError, pd.errors.ParserError):
+        # separador exótico, linhas irregulares: o engine Python é mais
+        # tolerante — vale a lentidão para não falhar a leitura
+        return pd.read_csv(path, sep=sep, engine="python")
+
+
 def read_raw(path: str, sep: str | None = None, sheet: int | str = 0) -> pd.DataFrame:
     """Lê CSV ou Excel; para CSV, sep=None detecta ';', tab ou ','."""
     ext = os.path.splitext(path)[1].lower()
@@ -68,7 +85,7 @@ def read_raw(path: str, sep: str | None = None, sheet: int | str = 0) -> pd.Data
         return _read_excel(path, sheet_name=sheet)
     if sep is None:
         sep = _detect_sep(path)
-    return pd.read_csv(path, sep=sep, engine="python")
+    return _read_csv(path, sep)
 
 
 def read_all_sheets(path: str, sep: str | None = None) -> dict[str, pd.DataFrame]:
@@ -84,7 +101,7 @@ def read_all_sheets(path: str, sep: str | None = None) -> dict[str, pd.DataFrame
     name = os.path.splitext(os.path.basename(path))[0]
     if sep is None:
         sep = _detect_sep(path)
-    return {name: pd.read_csv(path, sep=sep, engine="python")}
+    return {name: _read_csv(path, sep)}
 
 
 def datelike_columns(df: pd.DataFrame, exclude: tuple = ()) -> list[str]:

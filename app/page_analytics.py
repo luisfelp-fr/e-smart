@@ -163,7 +163,7 @@ def _ensure_base(file_path: str) -> bool:
         )
         # Mesma limpeza do carregamento original: base nova invalida o
         # tratamento de outliers e os resultados retidos de lag/regressão.
-        for k in ("ax_df_original", "ax_col_types_original", "ax_df_no_outliers",
+        for k in ("ax_df_original", "ax_col_types_original", "ax_out_export",
                   "ax_outliers_applied", "ax_outliers_removed_log",
                   "ax_lag_has_run", "ax_lag_arimax", "ax_lag_av_var_prev",
                   "ax_lag_av_lag", "ax_reg_has_run"):
