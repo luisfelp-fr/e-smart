@@ -1,8 +1,23 @@
 """Agregação da evidência em um score de culpabilidade (0-100) por parâmetro.
 
-O score pondera sete linhas de evidência independentes; a confiança vem da
-contagem de testes que permanecem significativos após correção FDR. Score e
-confiança juntos definem o veredito ("culpado provável", "possível", ...).
+O score pondera sete linhas de evidência; a confiança vem da contagem de
+testes que permanecem significativos após correção FDR. Score e confiança
+juntos definem o veredito ("culpado provável", "possível", ...).
+
+LIMITES CONHECIDOS DESTA AGREGAÇÃO — leia antes de tratar o score como medida:
+
+- **As linhas não são independentes.** Pearson, Spearman, o contraste de
+  percentis e a melhor transformação medem, em boa parte, a MESMA associação
+  monotônica. Uma associação real é contada várias vezes, o que infla tanto o
+  score quanto a contagem de significâncias.
+- **Os pesos e os limiares são heurísticos**, escolhidos por julgamento, não
+  calibrados contra dados com causa conhecida. Servem para ORDENAR
+  candidatos; o valor absoluto não tem interpretação probabilística.
+- **Há seleção dentro de cada indicador**: a melhor de ~18 transformações e o
+  menor p entre os lags do Granger. Ver ``stats_tests.selection_adjusted_p``.
+
+Por isso o resultado é uma FILA DE INVESTIGAÇÃO priorizada, não uma medida de
+causalidade nem uma probabilidade.
 """
 
 from __future__ import annotations
@@ -34,15 +49,33 @@ def _nz(v: float | None) -> float:
     return 0.0 if v is None or not np.isfinite(v) else float(v)
 
 
-def score_parameters(per_param: dict[str, dict], fdr: dict[str, dict[str, dict]], alpha: float) -> pd.DataFrame:
+# R² fora da amostra abaixo disto = o modelo não prevê nada de útil, e a
+# importância por permutação dele é ruído. Zero já significa "pior que chutar
+# a média"; a margem evita creditar modelos praticamente nulos.
+ML_MIN_R2 = 0.05
+
+
+def score_parameters(
+    per_param: dict[str, dict],
+    fdr: dict[str, dict[str, dict]],
+    alpha: float,
+    ml_r2: float | None = None,
+) -> pd.DataFrame:
     """Monta a tabela final de scores a partir dos resultados por parâmetro.
 
     ``per_param``: saída do pipeline com todos os testes por parâmetro.
     ``fdr``: {família de teste: {parâmetro: {p, p_adj, significant}}}.
     """
+    # A importância por permutação só significa alguma coisa se a floresta
+    # PREVÊ o alvo fora da amostra. Com R² <= 0 o modelo é pior que chutar a
+    # média, e permutar colunas de um modelo que não aprendeu nada mede ruído.
+    # Pior: como a importância é normalizada pelo máximo do grupo, sem esta
+    # trava ALGUÉM sempre recebia o componente ML cheio — mesmo quando não
+    # havia sinal nenhum a distribuir.
+    ml_usable = ml_r2 is not None and np.isfinite(ml_r2) and ml_r2 >= ML_MIN_R2
     max_ml = max(
         (_nz(r.get("ml_importance")) for r in per_param.values()), default=0.0
-    )
+    ) if ml_usable else 0.0
     rows = []
     for name, r in per_param.items():
         comp = {
@@ -108,6 +141,14 @@ def score_parameters(per_param: dict[str, dict], fdr: dict[str, dict[str, dict]]
                 "melhor_transformacao": r.get("best_label", "—"),
                 "testes_significativos": f"{n_sig}/{n_tested}",
                 "n_sig": n_sig,
+                # p bruto e p corrigido pela escolha da melhor transformação:
+                # a distância entre os dois mostra QUANTO da evidência vinha de
+                # ter procurado. Quem só olha o bruto acha que sabe mais do que
+                # sabe; quem só olha o corrigido não vê que houve busca.
+                "p_melhor_transf": r.get("best_p"),
+                "p_melhor_transf_ajustado": r.get("best_p_adj"),
+                "transformacoes_efetivas": round(
+                    _nz(r.get("n_eff_transforms")) or 1.0, 1),
                 **{f"comp_{k}": round(v, 3) for k, v in comp.items()},
             }
         )

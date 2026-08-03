@@ -9,7 +9,7 @@ import pandas as pd
 
 from .data_loader import LoadDiagnostics, load_table
 from .modeling import MLResult, ml_importance
-from .scoring import score_parameters
+from .scoring import ML_MIN_R2, score_parameters
 from .stats_tests import (
     correlations,
     direct_effect_flags,
@@ -120,6 +120,8 @@ def analyze_dataframe(
             best_feature=scan.best_feature,
             best_rho=scan.best_rho,
             best_p=scan.best_p,
+            best_p_adj=scan.best_p_adj,
+            n_eff_transforms=scan.n_eff,
             lag_profile=scan.lag_profile,
             rolling_profile=scan.rolling_profile,
         )
@@ -144,14 +146,17 @@ def analyze_dataframe(
 
     log("Correção de múltiplos testes (FDR Benjamini-Hochberg)...")
     pp = result.per_param
+    # Onde houve ESCOLHA dentro do indicador (melhor transformação, melhor lag
+    # do Granger), o FDR entre indicadores recebe o p JÁ corrigido por essa
+    # seleção — senão o "procurar até achar" passa direto pela correção.
     result.fdr = {
         "Pearson": fdr_adjust({p: pp[p]["pearson"][1] for p in params}, alpha),
         "Spearman": fdr_adjust({p: pp[p]["spearman"][1] for p in params}, alpha),
         "Melhor lag/média móvel": fdr_adjust(
-            {p: pp[p].get("best_p") for p in params}, alpha
+            {p: pp[p].get("best_p_adj") for p in params}, alpha
         ),
         "Granger": fdr_adjust(
-            {p: (pp[p]["granger"] or {}).get("p_value") for p in params}, alpha
+            {p: (pp[p]["granger"] or {}).get("p_value_adj") for p in params}, alpha
         ),
         "Mann-Whitney (P75 vs P25)": fdr_adjust(
             {p: (pp[p]["percentile"] or {}).get("p_mannwhitney") for p in params}, alpha
@@ -161,7 +166,18 @@ def analyze_dataframe(
         ),
     }
 
-    result.scores = score_parameters(pp, result.fdr, alpha)
+    # o R² fora da amostra decide se a importância do modelo pode pontuar
+    result.scores = score_parameters(
+        pp, result.fdr, alpha,
+        ml_r2=result.ml.r2_oos if result.ml else None,
+    )
+    if result.ml and not (
+        np.isfinite(result.ml.r2_oos) and result.ml.r2_oos >= ML_MIN_R2
+    ):
+        log(
+            f"Modelo preditivo sem poder fora da amostra (R²={result.ml.r2_oos:.3f}): "
+            "a importância dele NÃO entrou no score."
+        )
 
     log("Indício de efeito direto vs. indireto (correlação parcial)...")
     flags = direct_effect_flags(

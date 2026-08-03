@@ -20,6 +20,7 @@ from .aggregation import (
     metric_of,
 )
 from .pipeline import AnalysisResult
+from .scoring import ML_MIN_R2
 
 _DIRECTION_PHRASES = {
     "positiva": "quando {nome} sobe, {alvo} tende a SUBIR",
@@ -193,6 +194,23 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         "Correlação não é prova definitiva de causa: use este ranking para "
         "priorizar hipóteses e confirme com testes controlados no processo."
     )
+    rep.cautions.append(
+        "O ranking testa a melhor entre várias defasagens e médias móveis por "
+        "indicador, e as linhas de evidência se sobrepõem entre si — isso "
+        "favorece encontrar associação. Leia a ORDEM dos indicadores, não o "
+        "valor absoluto do score."
+    )
+    if result.ml and not (
+        np.isfinite(result.ml.r2_oos) and result.ml.r2_oos >= ML_MIN_R2
+    ):
+        r2_txt = (f"{result.ml.r2_oos:.2f}".replace(".", ",")
+                  if np.isfinite(result.ml.r2_oos) else "indisponível")
+        rep.cautions.append(
+            f"O modelo preditivo não conseguiu prever '{alvo}' em dados "
+            f"futuros (R² fora da amostra: {r2_txt}) — a importância dele foi "
+            "DESCONSIDERADA no score. O ranking se apoia apenas nos testes "
+            "estatísticos."
+        )
     if result.target_ljungbox and not result.target_ljungbox.get("has_structure"):
         rep.cautions.append(
             f"O alvo '{alvo}' não mostrou estrutura temporal relevante "
