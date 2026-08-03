@@ -9,7 +9,7 @@ import pandas as pd
 
 from .data_loader import LoadDiagnostics, load_table
 from .modeling import MLResult, ml_importance
-from .scoring import ML_MIN_R2, score_parameters
+from .scoring import score_parameters
 from .stats_tests import (
     correlations,
     direct_effect_flags,
@@ -142,7 +142,7 @@ def analyze_dataframe(
         result.per_param[p]["ml_importance"] = result.ml.importance.get(p, np.nan)
         result.per_param[p]["ml_top_feature"] = result.ml.top_feature.get(p, "—")
     if result.ml.skipped_reason:
-        log(f"ML pulado: {result.ml.skipped_reason}")
+        log(f"Importância por permutação não calculada — {result.ml.skipped_reason}")
 
     log("Correção de múltiplos testes (FDR Benjamini-Hochberg)...")
     pp = result.per_param
@@ -166,18 +166,12 @@ def analyze_dataframe(
         ),
     }
 
-    # o R² fora da amostra decide se a importância do modelo pode pontuar
+    # o R² fora da amostra decide se a importância do modelo pode pontuar —
+    # mesmo limiar que ``ml_importance`` usa para nem calcular a permutação
     result.scores = score_parameters(
         pp, result.fdr, alpha,
         ml_r2=result.ml.r2_oos if result.ml else None,
     )
-    if result.ml and not (
-        np.isfinite(result.ml.r2_oos) and result.ml.r2_oos >= ML_MIN_R2
-    ):
-        log(
-            f"Modelo preditivo sem poder fora da amostra (R²={result.ml.r2_oos:.3f}): "
-            "a importância dele NÃO entrou no score."
-        )
 
     log("Indício de efeito direto vs. indireto (correlação parcial)...")
     flags = direct_effect_flags(

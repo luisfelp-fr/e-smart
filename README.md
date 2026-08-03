@@ -173,6 +173,14 @@ Nada disso exige mudar código — só variável de ambiente:
 | `ESMART_AUDIT_LOG` | (desligado) | caminho do log de auditoria (JSON Lines) |
 | `ESMART_VERSION` | commit do git | versão carimbada nos relatórios |
 
+> **Reprodutibilidade bit a bit:** com a floresta multithread
+> (`ESMART_RF_JOBS > 1`), o sklearn soma as predições das árvores em ordem que
+> depende do escalonamento das threads — e soma de ponto flutuante não é
+> associativa. Duas execuções idênticas divergem ~1e-16, irrelevante para o
+> ranking (as faixas de veredito estão em 20/30/45 numa escala 0–100). Quem
+> precisar de resultado exatamente igual entre execuções, para auditoria,
+> deve fixar `ESMART_RF_JOBS=1`.
+
 Os caches do Streamlit são **globais ao processo**, não por sessão: com N
 pessoas usando arquivos diferentes, `ESMART_CACHE_SHEETS` perto de N evita
 reparse constante — ao custo de reter N planilhas em memória.
@@ -281,7 +289,9 @@ Especificamente sobre o **ranking do Módulo 2**, e vale alinhar com quem for us
   tabela mostra o p bruto e o ajustado lado a lado.
 - **A importância do modelo só pontua se ele prevê.** Com R² fora da amostra
   abaixo de 0,05 o componente de machine learning é desconsiderado, e o
-  relatório diz isso.
+  relatório diz isso. A análise também **não gasta tempo** calculando o que
+  vai descartar: mede o R² primeiro (~1% do custo) e só roda a importância
+  por permutação (~99%) se ela for entrar no score.
 - **Tendência, sazonalidade e turno não são controlados** nos testes
   principais; só o Granger trata estacionariedade. Séries com tendência comum
   correlacionam sem relação causal.

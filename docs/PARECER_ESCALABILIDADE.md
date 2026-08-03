@@ -303,6 +303,7 @@ Severidade considerando 50 usuários simultâneos.
 | 22 | Diagnóstico do dia usa informação futura sem avisar | `causal_analysis/day_diagnosis.py` | 🟠 | **Avisado** |
 | 23 | Relatório sem versão do algoritmo nem hash da base | `shared/pdf_export.py` | 🟠 | **Corrigido** |
 | 24 | Sem trilha de auditoria | app inteiro | 🟠 | **Corrigido** (desligado por padrão) |
+| 24b | Permutação calculada mesmo quando o score a descarta | `causal_analysis/modeling.py` | 🟠 | **Corrigido** (−98,8 %, §7.2) |
 | 25 | Linhas de evidência redundantes inflam a confiança | `causal_analysis/scoring.py:14` | 🟠 | **Documentado** (§3.4) |
 | 26 | Tendência/sazonalidade/turno não controlados | `causal_analysis/pipeline.py` | 🟠 | **Documentado** (§3.4) |
 | 27 | Estado só em `session_state`: cai a sessão, perde tudo | app inteiro | 🟠 | **Documentado** |
@@ -445,11 +446,43 @@ de features é `(1 + lag_máximo + nº de médias móveis) × indicadores` — c
    geram **9 métricas derivadas por coluna** na agregação multi-aba — 40 colunas viram
    360 indicadores, e daí ~6.500 features.
 
-E abre uma oportunidade concreta de otimização, **não implementada nesta entrega** por
-mudar o resultado numérico: como o componente ML agora só pontua com `R² ≥ 0,05`
-(seção 3.3), seria possível **ajustar a floresta primeiro e só rodar a importância por
-permutação se o R² justificar** — economizando os 98 % nos casos em que o modelo não
-prevê nada. Vale medir antes de decidir.
+### 7.2 Atalho de R²: a análise não paga pelo que vai descartar
+
+Decompondo aquela etapa dominante:
+
+| Sub-etapa | Tempo | % |
+|---|---|---|
+| Ajustar as florestas + prever | 4,8 s | **1,2 %** |
+| Importância por permutação | 389,4 s | **98,8 %** |
+
+Como o componente ML só pontua quando o modelo prevê de fato (`R² ≥ 0,05`, seção 3.3),
+calcular a parte cara **antes** de saber disso era gastar 99 % do tempo para descartar o
+resultado no fim.
+
+`ml_importance` passou a rodar em dois passos: mede o R² (1,2 % do custo) e só paga a
+permutação se ela for entrar no score. Medido numa grade de 2 mil linhas × 10 indicadores
+cujo alvo é ruído puro:
+
+| | Tempo | R² |
+|---|---|---|
+| Antes | 390,1 s | −0,017 |
+| Depois | **4,8 s** | −0,017 |
+
+**98,8 % de redução — 385 segundos por análise** que antes eram gastos calculando
+importâncias que o score jogava fora.
+
+Quando o modelo **prevê**, o passo 2 reajusta as florestas: custa aquele 1,2 % a mais, e
+com `random_state` fixo as florestas são idênticas, então o resultado não muda —
+verificado nos dados de exemplo, ranking e vereditos inalterados. Guardar os modelos
+entre os passos evitaria o reajuste, mas custaria centenas de MB de RAM para poupar 1 %.
+
+> **Nota de reprodutibilidade, descoberta ao testar isto:** com a floresta multithread
+> (`ESMART_RF_JOBS > 1`), o sklearn acumula as predições das árvores em ordem que depende
+> do escalonamento das threads, e soma de ponto flutuante não é associativa. **Duas
+> execuções idênticas divergem ~1e-16** — comportamento anterior a esta mudança. É
+> irrelevante para o ranking (as faixas de veredito estão em 20/30/45 numa escala 0–100),
+> mas quem precisar de reprodutibilidade bit a bit para auditoria deve fixar
+> `ESMART_RF_JOBS=1`, que torna o resultado exato.
 
 ---
 
@@ -566,5 +599,5 @@ cada um saiu do escopo por um motivo declarado.
 | **Controlar tendência, sazonalidade e turno** nos testes principais | Mudança de método, não correção de defeito. Exige decidir *como* (regressão com dummies de turno? diferenciação? decomposição?) — e cada escolha muda o resultado. |
 | **Persistência dos resultados** em disco | Decisão de escopo na pergunta de governança: foram escolhidas proveniência e auditoria. Faz mais sentido junto com a hospedagem definida, que decide *onde* persistir. |
 | **Métricas operacionais** (fila, memória, taxa de erro) | Mesma pergunta de governança, não selecionado. |
-| **Pular a permutação quando o `R²` não justifica** | Oportunidade identificada **depois**, na medição (§7.1) — não estava no escopo original. Vale até 98 % do tempo de análise e é a melhoria de desempenho com maior retorno hoje. |
+| ~~**Pular a permutação quando o `R²` não justifica**~~ | **Implementado** — ver §7.2. Medido: 390,1 s → 4,8 s (−98,8 %) quando o modelo não prevê, sem alterar o resultado quando prevê. |
 | **Autenticação de fato ligada** | Exige o registro do app no provedor de identidade da empresa, com credenciais que só vocês têm. O scaffold está pronto (§4.3). |

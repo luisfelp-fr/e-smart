@@ -20,6 +20,7 @@ from sklearn.metrics import r2_score
 from sklearn.model_selection import TimeSeriesSplit
 
 from .features import base_param, build_matrix, feature_label
+from .scoring import ML_MIN_R2
 
 RNG_SEED = 42
 
@@ -93,8 +94,27 @@ def ml_importance(
     windows: list[int],
     n_splits: int = 4,
     n_estimators: int = 300,
+    min_r2: float = ML_MIN_R2,
 ) -> MLResult:
-    """Treina RF em janelas crescentes e agrega importâncias por parâmetro."""
+    """Treina RF em janelas crescentes e agrega importâncias por parâmetro.
+
+    Roda em DOIS PASSOS, e a razão é medida: numa grade de 2 mil linhas por
+    10 indicadores, ajustar as florestas custa **1,2%** do tempo e a
+    importância por permutação custa **98,8%** — ela reavalia o modelo uma
+    vez por feature, por repetição, por bloco de validação.
+
+    Como a importância só entra no score quando o modelo prevê de fato
+    (``min_r2``, o mesmo limiar de ``scoring``), calcular a parte cara antes
+    de saber disso era gastar 99% do tempo para descartar o resultado.
+
+    Passo 1 mede o R² fora da amostra. Se não passa, devolve o R² e o motivo,
+    sem a permutação. Se passa, o passo 2 reajusta e permuta — o reajuste é
+    aquele 1,2%, e com ``random_state`` fixo as florestas são idênticas às do
+    passo 1, então o resultado não muda. Guardar os modelos entre os passos
+    evitaria o reajuste, mas custaria centenas de MB de RAM para poupar 1%.
+
+    ``min_r2=-inf`` desliga o atalho e calcula sempre (útil para diagnóstico).
+    """
     res = MLResult()
     # float32: metade da memória da matriz sem efeito prático no ranking
     # (build_matrix já devolve X em float32)
@@ -115,25 +135,54 @@ def ml_importance(
     n_splits = min(n_splits, max(2, len(X) // 40))
     splitter = TimeSeriesSplit(n_splits=n_splits)
     rf_jobs = _rf_jobs()
-    imp_acc = np.zeros(X.shape[1])
-    imp_sq = np.zeros(X.shape[1])
-    n_folds_used = 0
 
-    for train_idx, test_idx in splitter.split(X):
-        if len(test_idx) < 15:
-            continue
-        model = RandomForestRegressor(
+    def _forest() -> RandomForestRegressor:
+        """Mesma floresta nos dois passos — random_state fixo, modelo idêntico."""
+        return RandomForestRegressor(
             n_estimators=trees,
             min_samples_leaf=3,
             max_features="sqrt",
             random_state=RNG_SEED,
             n_jobs=rf_jobs,
         )
+
+    # ---- passo 1: o modelo prevê alguma coisa? (barato) ------------------
+    folds: list[tuple[np.ndarray, np.ndarray]] = []
+    for train_idx, test_idx in splitter.split(X):
+        if len(test_idx) < 15:
+            continue
+        model = _forest()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model.fit(X.iloc[train_idx], y.iloc[train_idx])
             pred = model.predict(X.iloc[test_idx])
-            res.r2_folds.append(float(r2_score(y.iloc[test_idx], pred)))
+        res.r2_folds.append(float(r2_score(y.iloc[test_idx], pred)))
+        folds.append((train_idx, test_idx))
+        del model  # não seguramos florestas entre os passos: RAM > 1% de CPU
+
+    if not folds:
+        res.skipped_reason = "nenhum bloco de validação temporal com tamanho suficiente"
+        return res
+
+    res.r2_oos = float(np.mean(res.r2_folds))
+    if not np.isfinite(res.r2_oos) or res.r2_oos < min_r2:
+        # Permutar colunas de um modelo que não aprendeu nada mede ruído — e a
+        # importância nem entraria no score. Parar aqui poupa ~99% do tempo.
+        res.skipped_reason = (
+            f"o modelo não conseguiu prever '{target}' fora da amostra "
+            f"(R²={res.r2_oos:.3f}, mínimo {min_r2:g}): a importância por "
+            "permutação mediria ruído e não foi calculada"
+        )
+        return res
+
+    # ---- passo 2: importância por permutação (caro) ---------------------
+    imp_acc = np.zeros(X.shape[1])
+    imp_sq = np.zeros(X.shape[1])
+    for train_idx, test_idx in folds:
+        model = _forest()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model.fit(X.iloc[train_idx], y.iloc[train_idx])
             # n_jobs=1: com processos (loky), cada worker copiaria modelo +
             # matriz — em máquinas pequenas (Streamlit Cloud) isso estoura a
             # RAM; o ganho de paralelismo não compensa
@@ -147,13 +196,9 @@ def ml_importance(
             )
         imp_acc += perm.importances_mean
         imp_sq += perm.importances_mean**2
-        n_folds_used += 1
+        del model
 
-    if not n_folds_used:
-        res.skipped_reason = "nenhum bloco de validação temporal com tamanho suficiente"
-        return res
-
-    res.r2_oos = float(np.mean(res.r2_folds))
+    n_folds_used = len(folds)
     mean_imp = imp_acc / n_folds_used
     std_imp = np.sqrt(np.maximum(0.0, imp_sq / n_folds_used - mean_imp**2))
     per_feature = pd.Series(mean_imp, index=X.columns).clip(lower=0.0)
