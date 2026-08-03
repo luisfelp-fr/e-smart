@@ -7,6 +7,7 @@ Relatório: reúna análises marcadas, visualize e baixe em PDF.
 
 from __future__ import annotations
 
+import gc
 import os
 import sys
 
@@ -50,9 +51,15 @@ def main() -> None:
         if uploaded:
             file_path = save_upload(uploaded)
             if st.session_state.get("file_path") != file_path:
-                # arquivo novo: descarta a base derivada da aba Analytics
+                # arquivo novo: descarta a base derivada da aba Analytics e os
+                # resultados retidos dos módulos. Sem isso a análise da planilha
+                # antiga seguia ocupando memória da sessão até alguém rodar
+                # outra — inútil, porque a assinatura já não confere.
                 for k in [k for k in st.session_state if str(k).startswith("ax_")]:
                     st.session_state.pop(k)
+                for k in ("m1_result", "m2_result"):
+                    st.session_state.pop(k, None)
+                gc.collect()
             st.session_state["file_path"] = file_path
             st.session_state["uploaded_name"] = uploaded.name
             st.success(f"✓ {uploaded.name}")

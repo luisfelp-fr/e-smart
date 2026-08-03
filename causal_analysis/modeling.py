@@ -25,13 +25,22 @@ RNG_SEED = 42
 
 
 def _rf_jobs() -> int:
-    """Núcleos por floresta — conservador de propósito.
+    """Núcleos por floresta, dividindo a máquina entre as análises em curso.
 
     Com ``n_jobs=-1`` cada análise toma TODOS os núcleos. Isso é ótimo com um
     usuário e destrutivo com vários: cinco análises simultâneas numa máquina
     de 8 núcleos viram 40 threads disputando 8, e o tempo total piora para
-    todo mundo. O padrão deixa folga para as outras sessões; quem roda o app
-    sozinho pode subir com ESMART_RF_JOBS (-1 = todos).
+    todo mundo.
+
+    O padrão divide os núcleos pelo número de análises que o app admite em
+    paralelo (``ESMART_MAX_HEAVY_JOBS``, o mesmo limite usado pela fila em
+    ``shared.limits``). Assim a máquina é usada por inteiro quando a fila
+    está cheia, sem oversubscription — e quem roda sozinho não perde
+    desempenho à toa. ``ESMART_RF_JOBS`` sobrepõe (-1 = todos).
+
+    A variável é lida direto do ambiente, e não importada de ``shared``,
+    para o motor de análise seguir utilizável como biblioteca/CLI sem
+    depender do pacote da interface.
     """
     raw = os.environ.get("ESMART_RF_JOBS")
     if raw:
@@ -40,7 +49,11 @@ def _rf_jobs() -> int:
             return n if n != 0 else 1
         except ValueError:
             pass
-    return max(1, (os.cpu_count() or 2) // 4)
+    try:
+        parallel = max(1, int(os.environ.get("ESMART_MAX_HEAVY_JOBS", "2")))
+    except ValueError:
+        parallel = 2
+    return max(1, (os.cpu_count() or 2) // parallel)
 
 
 @dataclass

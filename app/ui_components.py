@@ -20,6 +20,12 @@ UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "e_smart_uploads")
 UPLOAD_TTL_S = float(os.environ.get("ESMART_UPLOAD_TTL_H", "24")) * 3600
 
 
+def _touch(path: str) -> None:
+    """Renova a idade do arquivo: em uso não envelhece, logo não é varrido."""
+    with contextlib.suppress(OSError):
+        os.utime(path, None)
+
+
 def _sweep_old_uploads() -> None:
     """Remove uploads mais velhos que o TTL. Falhas aqui nunca quebram o app."""
     cutoff = time.time() - UPLOAD_TTL_S
@@ -59,6 +65,7 @@ def save_upload(uploaded_file) -> str:
     file_id = getattr(uploaded_file, "file_id", None)
     cached = st.session_state.get("_upload_cache")
     if file_id and cached and cached[0] == file_id and os.path.exists(cached[1]):
+        _touch(cached[1])
         return cached[1]
 
     _sweep_old_uploads()
@@ -79,6 +86,8 @@ def save_upload(uploaded_file) -> str:
             with contextlib.suppress(OSError):
                 os.remove(tmp)
             raise
+    else:
+        _touch(path)  # mesma planilha de outra sessão: renova a idade
 
     if file_id:
         st.session_state["_upload_cache"] = (file_id, path)
