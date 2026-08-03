@@ -306,10 +306,14 @@ Severidade considerando 50 usuários simultâneos.
 | 25 | Linhas de evidência redundantes inflam a confiança | `causal_analysis/scoring.py:14` | 🟠 | **Documentado** (§3.4) |
 | 26 | Tendência/sazonalidade/turno não controlados | `causal_analysis/pipeline.py` | 🟠 | **Documentado** (§3.4) |
 | 27 | Estado só em `session_state`: cai a sessão, perde tudo | app inteiro | 🟠 | **Documentado** |
-| 28 | **Sem autenticação** | app inteiro | 🔴 | **Depende da hospedagem** |
+| 28 | **Sem autenticação** | app inteiro | 🔴 | **Pronto para ligar** (§4.3) |
 | 29 | **~1 núcleo no plano gratuito** | plataforma | 🔴 | **Depende da hospedagem** |
+| 30 | Onde o dado repousa (planilhas no disco de quem hospeda) | plataforma | 🔴 | **Depende da hospedagem** |
 
-Os itens 28 e 29 são os que **não se resolvem no código** — são decisão de infraestrutura.
+O item 28 **não** espera a infraestrutura: o modelo de configuração está em
+`.streamlit/secrets.toml.example` e só falta o registro do app no provedor de identidade
+da empresa — que exige credenciais que só vocês têm. Os itens 29 e 30 são os que
+realmente **não se resolvem no código**.
 
 O item 21 merece nota: foi encontrado **pelos testes escritos para validar a própria
 correção**. A forma literal `1-(1-p)^n` zera qualquer p abaixo de ~1e-16 em float64,
@@ -553,13 +557,14 @@ infraestrutura.
 
 ### Itens conhecidos que ficaram fora desta entrega
 
-Registrados para decisão futura, não esquecidos:
+Registrados para decisão futura, não esquecidos. **Nada aqui é pendência esquecida** —
+cada um saiu do escopo por um motivo declarado.
 
-- **Recalibrar o score** colapsando as linhas de evidência redundantes (§3.4). Muda todo
-  ranking histórico — precisa de decisão consciente e, idealmente, validação contra casos
-  com causa conhecida pelo processo.
-- **Controlar tendência, sazonalidade e turno** nos testes principais, não só no Granger.
-- **Persistência dos resultados** em disco: hoje tudo vive em `session_state` e some se a
-  aba fechar ou o servidor reiniciar.
-- **Pular a importância por permutação quando o `R²` não justifica** — vale até 98 % do
-  tempo de análise (§7.1).
+| Item | Por que ficou fora |
+|---|---|
+| **Recalibrar o score** colapsando as linhas de evidência redundantes (§3.4) | Decisão de escopo: entre "só documentar", "p ajustado por seleção" e "recalibrar tudo", foi escolhido o caminho do meio. Recalibrar muda todo ranking histórico e pede validação contra casos com causa conhecida pelo processo. |
+| **Controlar tendência, sazonalidade e turno** nos testes principais | Mudança de método, não correção de defeito. Exige decidir *como* (regressão com dummies de turno? diferenciação? decomposição?) — e cada escolha muda o resultado. |
+| **Persistência dos resultados** em disco | Decisão de escopo na pergunta de governança: foram escolhidas proveniência e auditoria. Faz mais sentido junto com a hospedagem definida, que decide *onde* persistir. |
+| **Métricas operacionais** (fila, memória, taxa de erro) | Mesma pergunta de governança, não selecionado. |
+| **Pular a permutação quando o `R²` não justifica** | Oportunidade identificada **depois**, na medição (§7.1) — não estava no escopo original. Vale até 98 % do tempo de análise e é a melhoria de desempenho com maior retorno hoje. |
+| **Autenticação de fato ligada** | Exige o registro do app no provedor de identidade da empresa, com credenciais que só vocês têm. O scaffold está pronto (§4.3). |
