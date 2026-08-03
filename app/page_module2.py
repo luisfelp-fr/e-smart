@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import os
+import time
 
 import pandas as pd
 import streamlit as st
@@ -12,7 +14,9 @@ from causal_analysis import plots_plotly as pp
 from causal_analysis.aggregation import reduce_to_scale
 from causal_analysis.managerial_report import build_managerial_report
 from causal_analysis.pipeline import analyze_dataframe
+from shared import audit
 from shared.limits import Busy, heavy_slot, queue_note
+from shared.provenance import digest_of, stamp
 from shared.io_loader import load_workbook, prepare_analysis_frame
 from ui_components import add_to_report_button
 
@@ -72,9 +76,18 @@ def _run(file_path: str, target: str, max_lag: int, alpha: float, max_rows: int)
     spinner = "Analisando os dados — isso pode levar alguns instantes..."
     if note:
         spinner = f"Na fila ({note}) — a análise começa assim que liberar..."
+
+    params = {"alvo": target, "lag_max": max_lag, "alpha": alpha,
+              "linhas_max": max_rows}
+    audit.record("analise_iniciada", base=os.path.basename(file_path),
+                 sha256=digest_of(file_path), **params)
+    t0 = time.perf_counter()
     with st.spinner(spinner):
         with heavy_slot():
             out = _compute(file_path, target, max_lag, alpha, max_rows)
+    audit.record("analise_concluida", base=os.path.basename(file_path),
+                 sha256=digest_of(file_path),
+                 duracao_s=round(time.perf_counter() - t0, 1), **params)
 
     st.session_state["m2_result"] = (sig, out)
     return out
@@ -227,6 +240,12 @@ def render_module2(file_path: str | None) -> None:
                 "Ranking (estatísticas)": result.scores,
             },
             "figures": {"ranking": fig_rank},
+            # carimbo de origem: qual base, qual versão do algoritmo, quando
+            "provenance": stamp(
+                file_path,
+                st.session_state.get("uploaded_name"),
+                {"alvo": target, "lag_max": max_lag, "alpha": alpha},
+            ),
         },
         key=f"add_{item_id}",
     )

@@ -19,6 +19,8 @@ import pandas as pd
 from fpdf import FPDF
 from fpdf.fonts import FontFace
 
+from shared.provenance import app_version
+
 INK = (11, 11, 11)
 INK_2 = (82, 81, 78)
 GRID = (225, 224, 217)
@@ -125,11 +127,33 @@ def build_pdf(items: list[dict], errors: list[str] | None = None) -> bytes:
     pdf.set_text_color(*INK)
     pdf.cell(0, 11, _latin1("Relatório de análise de indicadores"),
              new_x="LMARGIN", new_y="NEXT")
-    stamp = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
+    gerado_em = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(*INK_2)
-    pdf.cell(0, 6, _latin1(f"Gerado em {stamp} - {len(items)} análise(s) "
+    pdf.cell(0, 6, _latin1(f"Gerado em {gerado_em} - {len(items)} análise(s) "
                            "selecionada(s)"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, _latin1(f"Versão do algoritmo: {app_version()}"),
+             new_x="LMARGIN", new_y="NEXT")
+
+    # Identidade das bases: dois arquivos com o mesmo SHA-256 são o mesmo
+    # dado, com qualquer nome. Sem isto, um relatório impresso não permite
+    # reproduzir nem contestar o resultado depois.
+    bases = {}
+    for it in items:
+        prov = it.get("provenance") or {}
+        if prov.get("base"):
+            bases[prov["base"]] = prov.get("sha256_curto", "—")
+    if bases:
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*INK)
+        pdf.cell(0, 6, _latin1("Base(s) analisada(s)"),
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*INK_2)
+        for nome, sha in bases.items():
+            pdf.multi_cell(0, 5, _latin1(f"{nome}  -  SHA-256 {sha}..."),
+                           new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(*INK)
