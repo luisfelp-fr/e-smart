@@ -1,3 +1,14 @@
+# Credenciais — NUNCA versionar.
+# O login do Streamlit (st.login/OIDC) guarda client_secret e cookie_secret
+# em .streamlit/secrets.toml. Sem estas linhas, um "git add ." distraído
+# publica as credenciais — e num repositório público isso é vazamento
+# imediato, não risco futuro. Segredo commitado é segredo queimado: some do
+# working tree mas fica no histórico, então tem de ser rotacionado.
+.streamlit/secrets.toml
+secrets.toml
+.env
+*.env
+
 __pycache__/
 *.pyc
 .venv/

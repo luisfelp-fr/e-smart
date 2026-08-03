@@ -28,6 +28,32 @@ _MISSING_OPTIONS = {
 }
 
 
+def _capability(series, indicator, lsl, usl, outlier_method, missing_method,
+                removed, _sig):
+    """``run_capability`` com memória por sessão.
+
+    A busca de transformação ajusta Box-Cox, Yeo-Johnson, Johnson SU e
+    Johnson SB por máxima verossimilhança. O Streamlit reexecuta a página
+    inteira a cada tecla digitada nos campos de limite, então sem esta
+    memória o processo refazia os quatro ajustes a cada caractere — custo
+    que se multiplica por todo mundo que estiver com o Módulo 1 aberto.
+
+    Fica na sessão (e não em ``st.cache_data``) porque o cache do Streamlit é
+    global ao processo: com várias pessoas, uma expulsaria o resultado da
+    outra a cada análise.
+    """
+    cached = st.session_state.get("m1_result")
+    if cached and cached[0] == _sig:
+        return cached[1]
+    rep = run_capability(
+        series, indicator, lsl=lsl, usl=usl,
+        outlier_method=outlier_method, missing_method=missing_method,
+        remove_labels=removed,
+    )
+    st.session_state["m1_result"] = (_sig, rep)
+    return rep
+
+
 def render_module1(file_path: str | None) -> None:
     st.header("📊 Módulo 1 — Análise de capabilidade")
     st.caption(
@@ -121,11 +147,12 @@ def render_module1(file_path: str | None) -> None:
     # ---- execução (1ª passada para exibir a carta) --------------------
     remove_key = f"remove_{sheet_name}_{indicator}"
     removed = st.session_state.get(remove_key, [])
+    sig = (file_path, sheet_name, indicator, lsl, usl, outlier_method,
+           missing_method, tuple(map(str, removed)))
     try:
-        rep = run_capability(
-            df[indicator], indicator, lsl=lsl, usl=usl,
-            outlier_method=outlier_method, missing_method=missing_method,
-            remove_labels=removed,
+        rep = _capability(
+            df[indicator], indicator, lsl, usl, outlier_method,
+            missing_method, removed, sig,
         )
     except ValueError as e:
         st.error(str(e))

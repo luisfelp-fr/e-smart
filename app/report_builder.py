@@ -6,6 +6,7 @@ import datetime as dt
 
 import streamlit as st
 
+from shared.limits import Busy, queue_note, render_slot
 from shared.pdf_export import build_pdf
 
 _CSS = """
@@ -135,8 +136,32 @@ def render_report_page() -> None:
         # resultado fica em cache até a lista de análises mudar
         signature = "|".join(it["id"] for it in items)
         if st.button("🖨️ Gerar PDF"):
-            with st.spinner("Gerando PDF (renderizando os gráficos)..."):
-                st.session_state["report_pdf"] = (signature, build_pdf(items))
+            note = queue_note("render")
+            msg = "Gerando PDF (renderizando os gráficos)..."
+            if note:
+                msg = f"Na fila ({note}) — o PDF começa assim que liberar..."
+            errors: list[str] = []
+            try:
+                with st.spinner(msg):
+                    # um PDF por vez: cada gráfico dirige um Chromium headless
+                    # (~200-400 MB de pico), e dois relatórios simultâneos
+                    # estouram a memória antes de ganhar tempo
+                    with render_slot():
+                        pdf_bytes = build_pdf(items, errors)
+            except Busy as e:
+                st.warning(str(e), icon="⏳")
+                pdf_bytes = None
+            if pdf_bytes is not None:
+                st.session_state["report_pdf"] = (signature, pdf_bytes)
+                if errors:
+                    st.warning(
+                        "O PDF saiu **sem os gráficos** — o renderizador de "
+                        "imagens não respondeu. Os textos e tabelas estão "
+                        "completos, e o preview HTML mostra os gráficos "
+                        "interativos.", icon="🖼️",
+                    )
+                    with st.expander("Detalhes técnicos"):
+                        st.code("\n".join(dict.fromkeys(errors)))
         cached = st.session_state.get("report_pdf")
         if cached and cached[0] == signature:
             st.download_button(

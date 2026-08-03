@@ -7,6 +7,7 @@ Relatório: reúna análises marcadas, visualize e baixe em PDF.
 
 from __future__ import annotations
 
+import gc
 import os
 import sys
 
@@ -22,6 +23,7 @@ from page_analytics import render_analytics  # noqa: E402
 from page_module1 import render_module1  # noqa: E402
 from page_module2 import render_module2  # noqa: E402
 from report_builder import render_report_page  # noqa: E402
+from shared.limits import limits_summary, queue_note  # noqa: E402
 from ui_components import save_upload  # noqa: E402
 
 st.set_page_config(
@@ -49,9 +51,15 @@ def main() -> None:
         if uploaded:
             file_path = save_upload(uploaded)
             if st.session_state.get("file_path") != file_path:
-                # arquivo novo: descarta a base derivada da aba Analytics
+                # arquivo novo: descarta a base derivada da aba Analytics e os
+                # resultados retidos dos módulos. Sem isso a análise da planilha
+                # antiga seguia ocupando memória da sessão até alguém rodar
+                # outra — inútil, porque a assinatura já não confere.
                 for k in [k for k in st.session_state if str(k).startswith("ax_")]:
                     st.session_state.pop(k)
+                for k in ("m1_result", "m2_result"):
+                    st.session_state.pop(k, None)
+                gc.collect()
             st.session_state["file_path"] = file_path
             st.session_state["uploaded_name"] = uploaded.name
             st.success(f"✓ {uploaded.name}")
@@ -71,6 +79,9 @@ def main() -> None:
         if n_report:
             st.caption(f"📑 {n_report} análise(s) no relatório")
         st.divider()
+        fila = queue_note()
+        if fila:
+            st.info(f"⏳ Análises em andamento — {fila}.", icon="⏳")
         with st.expander("ℹ️ Como usar"):
             st.markdown(
                 "1. **Carregue** sua planilha acima — ela vira a base de "
@@ -85,6 +96,7 @@ def main() -> None:
                 "5. Em cada análise, clique em **Adicionar ao relatório** e "
                 "baixe tudo em PDF na página Relatório."
             )
+        st.caption(f":gray[Capacidade: {limits_summary()}]")
 
     if page.startswith("📊"):
         render_module1(file_path)

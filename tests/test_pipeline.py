@@ -124,6 +124,40 @@ def test_pipeline_identifica_causas_e_gera_relatorio():
         assert "causa_linear" in content
 
 
+def test_single_feature_reproduz_a_familia_completa():
+    """``single_feature`` deve dar exatamente o mesmo que ``derived_features``.
+
+    O caminho direto/indireto passou a recriar só a série de que precisa, em
+    vez de montar a família inteira. Se as duas divergirem, o indício de
+    efeito direto muda de valor silenciosamente.
+    """
+    from causal_analysis.features import derived_features, single_feature
+
+    rng = np.random.default_rng(7)
+    x = pd.Series(rng.normal(0, 1, 200).cumsum(), name="param")
+    familia = derived_features(x, max_lag=5, windows=[3, 7])
+
+    for col in familia.columns:
+        obtido = single_feature(x, col)
+        assert obtido is not None, f"não recriou a coluna {col}"
+        pd.testing.assert_series_equal(
+            obtido.reset_index(drop=True),
+            familia[col].reset_index(drop=True),
+            check_names=False,
+        )
+
+
+def test_single_feature_recusa_nome_de_outra_serie():
+    """Nome que não pertence à série devolve None, sem inventar dado."""
+    from causal_analysis.features import single_feature
+
+    x = pd.Series([1.0, 2.0, 3.0, 4.0], name="param")
+    assert single_feature(x, "outro__lag2") is None
+    assert single_feature(x, "param__lagX") is None
+    assert single_feature(x, "param__mm1") is None  # janela < 2 não existe
+    assert single_feature(x, "param") is x
+
+
 if __name__ == "__main__":
     test_pipeline_identifica_causas_e_gera_relatorio()
     print("OK: pipeline identifica as causas e gera o relatório.")

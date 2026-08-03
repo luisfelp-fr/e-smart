@@ -146,10 +146,71 @@ minuto por meses):
 
 Dica: no **Streamlit Community Cloud** (plano gratuito, ~1 vCPU e ~2,7 GB de
 RAM), mantenha o teto do Módulo 2 em 5–10 mil linhas para respostas em poucos
-minutos. O app guarda **uma análise do Módulo 2 por vez** em memória (cache de
-1 entrada, sem cópias por rerun); a matriz do modelo usa float32 e a
-importância por permutação roda em processo único — mudanças pensadas para o
-app não estourar a RAM do plano gratuito.
+minutos. Cada sessão guarda **uma análise do Módulo 2 por vez** em memória; a
+matriz do modelo é montada em float32 e a importância por permutação roda em
+processo único — mudanças pensadas para o app não estourar a RAM.
+
+## Uso por várias pessoas ao mesmo tempo
+
+O Streamlit atende **todas as sessões num único processo**: sem limite, várias
+análises simultâneas disputam os mesmos núcleos e a mesma RAM, e o resultado
+não é "mais devagar" — é o processo travando. Por isso o app tem **fila**:
+quem chega além do limite espera e vê sua posição, em vez de derrubar o app.
+
+Nada disso exige mudar código — só variável de ambiente:
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `ESMART_MAX_HEAVY_JOBS` | 2 | análises do Módulo 2 em paralelo |
+| `ESMART_MAX_RENDER_JOBS` | 1 | PDFs em paralelo (cada gráfico usa um Chromium) |
+| `ESMART_QUEUE_TIMEOUT_S` | 600 | espera máxima na fila antes de avisar |
+| `ESMART_RF_JOBS` | núcleos ÷ `MAX_HEAVY_JOBS` | núcleos por Random Forest (`-1` = todos) |
+| `ESMART_CACHE_SHEETS` | 2 | planilhas retidas em cache (global ao processo) |
+| `ESMART_CACHE_INDICATOR` | 8 | tabelas de indicador em cache |
+| `ESMART_CACHE_ANALYTICS` | 4 | bases da aba Analytics em cache |
+| `ESMART_UPLOAD_TTL_H` | 24 | idade máxima dos uploads em disco |
+| `ESMART_MAX_REPORT_ITEMS` | 40 | teto de análises por relatório |
+| `ESMART_AUDIT_LOG` | (desligado) | caminho do log de auditoria (JSON Lines) |
+| `ESMART_VERSION` | commit do git | versão carimbada nos relatórios |
+
+Os caches do Streamlit são **globais ao processo**, não por sessão: com N
+pessoas usando arquivos diferentes, `ESMART_CACHE_SHEETS` perto de N evita
+reparse constante — ao custo de reter N planilhas em memória.
+
+Para dimensionar a máquina, meça o custo de uma análise no seu hardware:
+
+```bash
+python benchmarks/bench_module2.py          # grades padrão
+python benchmarks/bench_module2.py 10000 40 # uma grade específica
+```
+
+> **Plano gratuito não serve para um time inteiro.** ~1 vCPU torna as análises
+> estritamente sequenciais. Para dezenas de pessoas, veja
+> [`docs/PARECER_ESCALABILIDADE.md`](docs/PARECER_ESCALABILIDADE.md) — com o
+> dimensionamento e os caminhos de hospedagem.
+
+### Acesso e dados
+
+Duas perguntas diferentes, que costumam vir grudadas:
+
+| Pergunta | Quem resolve | Depende da hospedagem? |
+|---|---|---|
+| **Quem entra no app** | O Streamlit, nativamente (`st.login`, OIDC, ≥ 1.42) | **Não** |
+| **Onde o dado repousa** | Ninguém por padrão — é decisão de hospedagem | **Sim** |
+
+Hoje **o app não tem login**: publicado aberto, qualquer um sobe planilha e
+dispara análise. Ligar o login não espera a decisão de infraestrutura — copie
+[`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example) para
+`.streamlit/secrets.toml` (no Community Cloud, cole em *Settings > Secrets*),
+preencha com o registro do app no provedor da empresa e chame `st.login()`.
+
+O arquivo real está no `.gitignore` e **nunca** deve ser versionado — segredo
+commitado fica no histórico mesmo depois de apagado, e precisa ser rotacionado
+no provedor.
+
+O que o login **não** resolve: as planilhas enviadas continuam gravadas no
+disco de quem hospeda o app. Se houver restrição sobre dado operacional sair
+da empresa, isso é requisito de hospedagem, não de autenticação.
 
 ## Uso por linha de comando (motor do Módulo 2)
 
@@ -203,3 +264,30 @@ dividem a "culpa". Use os resultados para priorizar hipóteses e confirme com
 testes controlados no processo. Nos índices de capabilidade, processos fora de
 controle estatístico (causas especiais na carta) produzem índices pouco
 confiáveis — trate a estabilidade primeiro.
+
+Especificamente sobre o **ranking do Módulo 2**, e vale alinhar com quem for usar:
+
+- **Leia a ORDEM, não o valor do score.** Os pesos e limiares são heurísticos,
+  escolhidos por julgamento e não calibrados — servem para ordenar candidatos;
+  o número absoluto não tem interpretação probabilística.
+- **As linhas de evidência se sobrepõem.** Pearson, Spearman, contraste de
+  percentis e a melhor transformação medem, em boa parte, a mesma associação
+  monotônica; uma associação real é contada mais de uma vez, o que infla o
+  rótulo de confiança.
+- **Houve busca, e ela é cobrada.** O ranking testa ~18 transformações por
+  indicador e até 12 lags de Granger, ficando com o melhor. O p-valor do
+  vencedor é corrigido pelo número *efetivo* de testes independentes (Šidák
+  sobre autovalores, método de Li & Ji) antes da FDR entre indicadores — a
+  tabela mostra o p bruto e o ajustado lado a lado.
+- **A importância do modelo só pontua se ele prevê.** Com R² fora da amostra
+  abaixo de 0,05 o componente de machine learning é desconsiderado, e o
+  relatório diz isso.
+- **Tendência, sazonalidade e turno não são controlados** nos testes
+  principais; só o Granger trata estacionariedade. Séries com tendência comum
+  correlacionam sem relação causal.
+- **O diagnóstico do dia prioriza, não decompõe.** É *relevância histórica ×
+  atipicidade*: não calcula contribuição contrafactual nem intervalo de
+  confiança. E, para dias que não são o último da base, usa informação
+  posterior àquela data — o app avisa quando é o caso.
+
+Análise completa em [`docs/PARECER_ESCALABILIDADE.md`](docs/PARECER_ESCALABILIDADE.md).

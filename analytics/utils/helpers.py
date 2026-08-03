@@ -188,10 +188,19 @@ def add_to_report(item: dict[str, Any]) -> None:
         return
     from analytics.report_adapter import adapt_report_item
 
+    from shared.limits import MAX_REPORT_ITEMS
+
     adapted = adapt_report_item(item)
     items = st.session_state.setdefault("report_items", [])
     if any(existing["id"] == adapted["id"] for existing in items):
         st.info("✓ Esta análise já está no relatório.", icon="📄")
+        return
+    if len(items) >= MAX_REPORT_ITEMS:
+        st.warning(
+            f"O relatório atingiu o limite de {MAX_REPORT_ITEMS} análises. "
+            "Baixe o PDF e limpe a lista para continuar adicionando.",
+            icon="📄",
+        )
         return
     items.append(adapted)
     st.success("Análise adicionada! Veja e baixe na página **📄 Relatório**.")

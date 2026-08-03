@@ -113,6 +113,61 @@ class TransformScan:
     best_feature: str = ""
     best_rho: float = np.nan
     best_p: float = np.nan
+    # p do vencedor corrigido pelo nº efetivo de transformações que disputaram
+    best_p_adj: float = np.nan
+    n_eff: float = 1.0
+
+
+def effective_n_tests(frame: pd.DataFrame) -> float:
+    """Nº EFETIVO de testes independentes num bloco de séries correlacionadas.
+
+    Método de Li & Ji (2005), baseado nos autovalores da matriz de correlação:
+    cada autovalor contribui com sua parte inteira (1, se >= 1) mais sua parte
+    fracionária. Séries perfeitamente correlacionadas contam como um teste só;
+    séries independentes contam como N.
+
+    É a peça que falta para corrigir o "procurar até achar": testar 18
+    transformações e ficar com a melhor NÃO é um teste — mas também não são
+    18 testes independentes, porque lag 3 e lag 4 são quase a mesma série.
+    Bonferroni sobre 18 seria conservador demais; usar o p do vencedor como se
+    fosse único é anticonservador. O número efetivo fica no meio, e é o
+    divisor honesto.
+    """
+    cols = [c for c in frame.columns if frame[c].notna().sum() >= 3]
+    if len(cols) <= 1:
+        return 1.0
+    corr = frame[cols].corr().to_numpy(dtype=float)
+    corr = np.nan_to_num(corr, nan=0.0)
+    np.fill_diagonal(corr, 1.0)
+    try:
+        eig = np.linalg.eigvalsh(corr)
+    except np.linalg.LinAlgError:
+        return float(len(cols))
+    eig = np.abs(eig)
+    m_eff = float(np.sum((eig >= 1.0).astype(float) + (eig - np.floor(eig))))
+    return float(min(max(m_eff, 1.0), len(cols)))
+
+
+def sidak_adjust(p: float, n_eff: float) -> float:
+    """Corrige o p do vencedor pelo nº efetivo de testes que disputaram.
+
+    Šidák: a chance de o MELHOR de n testes bater o limiar por acaso é
+    ``1 - (1 - p)^n``. Com n=1 devolve o próprio p.
+
+    Calculado como ``-expm1(n · log1p(-p))``, que é a mesma expressão em
+    forma numericamente estável. A forma literal perde tudo com p pequeno:
+    para p = 7e-43, ``1 - p`` arredonda para exatamente 1.0 em float64 e o
+    resultado vira **zero** — transformando a evidência mais forte da tabela
+    num p-valor impossível. ``log1p``/``expm1`` preservam a precisão, e para
+    p pequeno o resultado tende a n·p, como esperado.
+    """
+    if p is None or not np.isfinite(p):
+        return float("nan")
+    n = max(1.0, float(n_eff))
+    p = min(max(float(p), 0.0), 1.0)
+    if p >= 1.0:
+        return 1.0
+    return float(min(1.0, -np.expm1(n * np.log1p(-p))))
 
 
 def scan_transforms(
@@ -147,6 +202,11 @@ def scan_transforms(
             scan.best_feature = col
             scan.best_rho = rho
             scan.best_p = p
+
+    # ficamos com a MELHOR de várias transformações: o p do vencedor precisa
+    # pagar por essa escolha, senão a evidência parece mais forte do que é
+    scan.n_eff = effective_n_tests(fam)
+    scan.best_p_adj = sidak_adjust(scan.best_p, scan.n_eff)
     return scan
 
 
@@ -198,8 +258,22 @@ def granger_causality(x: pd.Series, y: pd.Series, max_lag: int) -> dict | None:
         return None
     pvals = {lag: float(r[0]["ssr_ftest"][1]) for lag, r in res.items()}
     best_lag = min(pvals, key=pvals.get)
+
+    # Ficamos com o MENOR p entre os lags testados. Sob a hipótese nula isso
+    # não tem distribuição de p-valor: com 12 tentativas, "algum lag deu
+    # significativo" acontece com frequência bem maior que alfa. Os testes são
+    # fortemente dependentes entre si (modelos aninhados sobre as mesmas
+    # séries defasadas), então o nº efetivo é estimado pela dependência entre
+    # as próprias defasagens de x — aproximação, mas muito melhor que tratar
+    # o vencedor como teste único.
+    lag_frame = pd.concat(
+        {f"lag{k}": data["x"].shift(k) for k in range(1, m + 1)}, axis=1
+    )
+    n_eff = effective_n_tests(lag_frame)
     return {
         "p_value": pvals[best_lag],
+        "p_value_adj": sidak_adjust(pvals[best_lag], n_eff),
+        "n_eff": float(n_eff),
         "best_lag": int(best_lag),
         "diffs_applied": int(d),
         "lags_tested": int(m),
@@ -256,15 +330,18 @@ def direct_effect_flags(
         return {}
 
     # melhor versão temporal de cada parâmetro, alinhada ao alvo
-    from .features import derived_features
+    from .features import single_feature
 
     def best_series(p: str) -> pd.Series:
         feat = per_param.get(p, {}).get("best_feature") or p
         if feat != p:
-            # a melhor versão é derivada (lag/média móvel): recria a família
-            fam = derived_features(df[p], 30, [3, 7, 14])
-            if feat in fam.columns:
-                return fam[feat]
+            # a melhor versão é derivada (lag/média móvel): recria só ela.
+            # Antes isto montava a família inteira com max_lag fixo em 30 —
+            # 34 colunas por parâmetro, no laço drop-one do top-10, para usar
+            # uma; e o 30 fixo ignorava o max_lag escolhido pelo usuário.
+            s = single_feature(df[p], feat)
+            if s is not None:
+                return s
         return df[p]
 
     series = {p: best_series(p) for p in head}

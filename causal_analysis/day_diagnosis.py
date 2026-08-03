@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .aggregation import METRIC_FRIENDLY, base_indicator, metric_of
-from .features import derived_features, feature_label
+from .features import feature_label, single_feature
 from .pipeline import AnalysisResult
 
 # |2·percentil − 1|: 0 = mediana, 1 = extremo
@@ -55,6 +55,23 @@ def _friendly(param: str) -> str:
     if metric is None:
         return f"'{base}'"
     return f"'{base}' — {METRIC_FRIENDLY.get(metric, metric)}"
+
+
+def _uses_future(index: pd.Index, label) -> bool:
+    """O dia diagnosticado tem dias posteriores na base?
+
+    Se tem, o percentil do dia e o ranking histórico foram calculados com
+    dados que ainda não existiam naquela data — vazamento de informação
+    futura. Não é erro de cálculo, é limite de interpretação, e quem lê o
+    resultado precisa saber.
+    """
+    try:
+        pos = index.get_loc(label)
+    except (KeyError, TypeError):
+        return False
+    if not isinstance(pos, (int, np.integer)):
+        return False  # rótulo duplicado/fatiado: não dá para afirmar
+    return int(pos) < len(index) - 1
 
 
 def _percentile_of(series: pd.Series, value: float) -> float:
@@ -110,8 +127,9 @@ def diagnose_day(result: AnalysisResult, label, top: int = 10) -> DayDiagnosis:
         transform = str(row.get("melhor_transformacao", "bruto"))
         # avalia o indicador na MESMA versão temporal que o ranking usou
         if best_feat != param:
-            fam = derived_features(df[param], result.max_lag, result.windows)
-            serie = fam[best_feat] if best_feat in fam.columns else df[param]
+            serie = single_feature(df[param], best_feat)
+            if serie is None:
+                serie = df[param]
         else:
             serie = df[param]
         if label not in serie.index:
@@ -192,4 +210,20 @@ def diagnose_day(result: AnalysisResult, label, top: int = 10) -> DayDiagnosis:
         "O diagnóstico do dia cruza o ranking histórico com a atipicidade do "
         "dia — é um indício priorizado para investigação, não prova causal."
     )
+    diag.cautions.append(
+        "O 'score do dia' é *relevância histórica × atipicidade*. Ele NÃO "
+        "mede quanto cada indicador contribuiu para o resultado: não há "
+        "cálculo contrafactual (\"o que teria acontecido se X estivesse "
+        "normal\"), não há repartição da variação do alvo e não há intervalo "
+        "de confiança. Serve para responder \"o que investigar primeiro?\", "
+        "não \"quem causou?\"."
+    )
+    if _uses_future(result.df.index, label):
+        diag.cautions.append(
+            "Este dia NÃO é o último da base: tanto o ranking histórico quanto "
+            "o percentil do dia foram calculados sobre a série inteira, "
+            "incluindo dias POSTERIORES a ele. O diagnóstico usa, portanto, "
+            "informação que não existia naquela data — para reconstituir uma "
+            "decisão tomada no dia, refaça a análise com a base cortada ali."
+        )
     return diag
