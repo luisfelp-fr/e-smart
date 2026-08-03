@@ -243,11 +243,33 @@ memória estoura antes disso. **Nenhum ajuste de parâmetro resolve** — falta 
 
 O app está publicado sem **nenhuma** autenticação: não há `st.login`, nem OIDC, nem
 allowlist, nem `secrets.toml`. Qualquer pessoa com o endereço acessa a interface, sobe
-uma planilha de até 200 MB e dispara uma análise pesada.
+uma planilha de até 200 MB e dispara uma análise pesada. Como o fluxo é upload manual,
+**cada time subiria dado operacional próprio numa URL pública**.
 
-Como o fluxo é upload manual, **cada time subiria dado operacional próprio numa URL
-pública**. Independente do desempenho, isso precisa ser resolvido antes de distribuir o
-link para 50 pessoas — e a solução depende de onde o app for hospedado (seção 8).
+**Duas perguntas que costumam vir grudadas — e que têm respostas diferentes:**
+
+| Pergunta | Quem resolve | Bloqueado pela hospedagem? |
+|---|---|---|
+| **Quem entra no app** | O Streamlit, nativamente e bem (`st.login`, OIDC, ≥ 1.42) | **Não** |
+| **Onde o dado repousa** | Ninguém, por padrão — é decisão de hospedagem | **Sim** |
+
+Separar as duas muda a ordem das coisas: **o login pode ser feito hoje**, inclusive no
+plano gratuito, sem esperar a decisão de infraestrutura. Basta cadastrar o app no Entra ID
+da empresa, preencher `client_id`, `client_secret` e `cookie_secret`, e chamar
+`st.login()`. O modelo está em `.streamlit/secrets.toml.example`; no Community Cloud o
+mesmo conteúdo vai em *Settings > Secrets*. Usar o tenant específico da empresa (e não
+`common`) é o que restringe o acesso a quem é da organização.
+
+O que o login **não** resolve: as planilhas enviadas continuam gravadas no disco de quem
+hospeda o app. Restringir quem entra não muda a jurisdição nem o dono da infraestrutura
+onde o dado fica. Se houver restrição sobre dado operacional sair da empresa, isso é
+requisito de hospedagem (seção 8) e nenhuma configuração de autenticação o satisfaz.
+
+> **Higiene de segredo, aplicada nesta entrega:** o `.gitignore` não cobria
+> `.streamlit/secrets.toml`. No momento em que a autenticação fosse ligada, um `git add .`
+> distraído publicaria as credenciais num repositório público. Corrigido — junto com
+> `secrets.toml`, `.env` e `*.env`. Verificado: **nenhum segredo chegou a ser commitado**,
+> então não há histórico a limpar nem credencial a rotacionar.
 
 ---
 
@@ -429,10 +451,16 @@ prevê nada. Vale medir antes de decidir.
 
 ## 8. Caminhos de hospedagem
 
+> Lembre da separação da seção 4.3: **autenticação não depende desta escolha** — pode ser
+> ligada hoje, em qualquer das opções. O que depende é **onde o dado repousa**.
+
 ### Opção A — Continuar no Streamlit Community Cloud
 - **Custo:** zero.
 - **Recursos:** ~1 vCPU, ~2,7 GB, processo único, hiberna com inatividade.
-- **Autenticação:** apenas allowlist por e-mail Google em app privado.
+- **Quem entra:** resolvível via `st.login`/OIDC com o Entra ID da empresa.
+- **Onde o dado repousa:** infraestrutura da Snowflake/Streamlit, **fora da empresa** —
+  as planilhas enviadas ficam no disco efêmero deles. É o ponto que costuma inviabilizar
+  o plano gratuito para dado operacional, independente de desempenho.
 - **Veredito:** serve para **1 a 3 pessoas**. **Não serve para 50** — e os termos de uso
   do plano gratuito não preveem uso produtivo corporativo.
 
@@ -506,14 +534,17 @@ infraestrutura.
 
 ### Sequência recomendada
 
-1. **Alinhar a leitura do resultado com os times** — que é fila de investigação
+1. **Ligar a autenticação** (`st.login` com o Entra ID) — **não depende da hospedagem** e
+   pode ser feito hoje. É bloqueante para divulgar o link, e destrava a trilha de
+   auditoria (seção 6.4), que sem identidade registra o quê mas não quem.
+2. **Alinhar a leitura do resultado com os times** — que é fila de investigação
    priorizada, não medida de causa (seções 3.4 e 3.5). É o passo mais barato e o de maior
    impacto: evita decisão errada tomada com confiança indevida.
-2. **Definir a hospedagem** (Opção B) e rodar `benchmarks/bench_module2.py` e
+3. **Definir a hospedagem** (Opção B) e rodar `benchmarks/bench_module2.py` e
    `benchmarks/profile_steps.py` na máquina escolhida, com dados reais de um time.
-3. **Colocar autenticação corporativa** antes de divulgar o link — é bloqueante, e
-   destrava a trilha de auditoria (seção 6.4).
-4. **Ajustar as variáveis de ambiente** conforme a medição do passo 2.
+   Levar à TI a pergunta certa: não "onde hospedar?", mas **"dado operacional pode
+   repousar fora da empresa?"** — é ela que decide entre as opções.
+4. **Ajustar as variáveis de ambiente** conforme a medição do passo 3.
 5. **Piloto com 2 ou 3 times** por duas semanas, observando fila, memória e — importante —
    se os vereditos mais conservadores fazem sentido para quem conhece o processo.
 6. Só então abrir para os 50.

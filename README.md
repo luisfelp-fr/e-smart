@@ -187,9 +187,30 @@ python benchmarks/bench_module2.py 10000 40 # uma grade específica
 > **Plano gratuito não serve para um time inteiro.** ~1 vCPU torna as análises
 > estritamente sequenciais. Para dezenas de pessoas, veja
 > [`docs/PARECER_ESCALABILIDADE.md`](docs/PARECER_ESCALABILIDADE.md) — com o
-> dimensionamento, os caminhos de hospedagem e o requisito de autenticação
-> (o app **não tem login**: publicado aberto, qualquer um sobe planilha e
-> dispara análise).
+> dimensionamento e os caminhos de hospedagem.
+
+### Acesso e dados
+
+Duas perguntas diferentes, que costumam vir grudadas:
+
+| Pergunta | Quem resolve | Depende da hospedagem? |
+|---|---|---|
+| **Quem entra no app** | O Streamlit, nativamente (`st.login`, OIDC, ≥ 1.42) | **Não** |
+| **Onde o dado repousa** | Ninguém por padrão — é decisão de hospedagem | **Sim** |
+
+Hoje **o app não tem login**: publicado aberto, qualquer um sobe planilha e
+dispara análise. Ligar o login não espera a decisão de infraestrutura — copie
+[`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example) para
+`.streamlit/secrets.toml` (no Community Cloud, cole em *Settings > Secrets*),
+preencha com o registro do app no provedor da empresa e chame `st.login()`.
+
+O arquivo real está no `.gitignore` e **nunca** deve ser versionado — segredo
+commitado fica no histórico mesmo depois de apagado, e precisa ser rotacionado
+no provedor.
+
+O que o login **não** resolve: as planilhas enviadas continuam gravadas no
+disco de quem hospeda o app. Se houver restrição sobre dado operacional sair
+da empresa, isso é requisito de hospedagem, não de autenticação.
 
 ## Uso por linha de comando (motor do Módulo 2)
 
