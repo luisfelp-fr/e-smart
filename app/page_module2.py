@@ -182,12 +182,16 @@ def render_module2(file_path: str | None) -> None:
 
     # ---- abas de exploração --------------------------------------------
     st.divider()
-    tab_diag, tab_detalhe = st.tabs(
-        ["📅 Diagnóstico do dia", "🔬 Investigar um indicador"]
+    tab_diag, tab_cf, tab_detalhe = st.tabs(
+        ["📅 Diagnóstico do dia", "🎯 Contrafactual e repartição",
+         "🔬 Investigar um indicador"]
     )
 
     with tab_diag:
         _render_day_diagnosis(result)
+
+    with tab_cf:
+        _render_counterfactual(result, f"{file_path}|{target}|{max_lag}|{alpha}")
 
     with tab_detalhe:
         _render_indicator_detail(result)
@@ -253,6 +257,192 @@ def _render_indicator_detail(result) -> None:
             pp.fig_timeseries_overlay(y, x, result.target, chosen),
             use_container_width=True,
         )
+
+
+# cache_resource: o modelo contrafactual é caro (comitê de florestas) e não
+# deve ser re-serializado a cada rerun; max_entries=1 mantém uma análise por
+# vez na memória, como o resto do módulo
+@st.cache_resource(
+    max_entries=1,
+    show_spinner="Ajustando o modelo contrafactual e o comitê de bootstrap...",
+)
+def _fit_cf(_result, cache_key: str, top: int, n_boot: int):
+    from causal_analysis.counterfactual import fit_counterfactual_model
+
+    return fit_counterfactual_model(_result, top=top, n_boot=n_boot)
+
+
+@st.cache_resource(max_entries=1, show_spinner="Repartindo a variação do alvo...")
+def _var_attr(_cfm, cache_key: str):
+    from causal_analysis.counterfactual import variance_attribution
+
+    return variance_attribution(_cfm)
+
+
+@st.cache_resource(max_entries=1, show_spinner="Simulando cenários...")
+def _scenarios(_cfm, cache_key: str):
+    from causal_analysis.counterfactual import scenario_effects
+
+    return scenario_effects(_cfm)
+
+
+def _render_counterfactual(result, cache_key: str) -> None:
+    """Aba do contrafactual: 'e se X estivesse normal', repartição e IC."""
+    from causal_analysis.counterfactual import (
+        OTHERS,
+        attribute_day,
+        response_curve,
+    )
+
+    st.caption(
+        "O ranking diz **quem** influencia o alvo. Esta aba responde **quanto**, "
+        "em unidade do alvo: *o que teria acontecido se este indicador "
+        "estivesse no valor típico?* Um modelo é consultado duas vezes — com "
+        "os valores que de fato ocorreram e com o indicador forçado ao valor "
+        "típico — e a diferença é o efeito atribuído. A repartição usa o "
+        "**valor de Shapley**, a única forma de dividir o desvio em que as "
+        "fatias somam exatamente o total. Todos os números saem com "
+        "**intervalo de confiança** (bootstrap por blocos)."
+    )
+
+    with st.expander("⚙️ Opções do contrafactual"):
+        top = st.slider(
+            "Indicadores decompostos individualmente", 3, 15, 8,
+            help="Os demais entram agrupados como 'demais indicadores' — "
+                 "assim a repartição continua fechando 100% sem encarecer o "
+                 "cálculo.",
+        )
+        n_boot = st.select_slider(
+            "Réplicas de bootstrap (intervalos de confiança)",
+            options=[0, 4, 8, 12, 20], value=8,
+            help="Cada réplica reajusta um modelo sobre blocos reamostrados "
+                 "da série. Mais réplicas = intervalos mais estáveis e "
+                 "cálculo mais lento. Zero desliga os intervalos.",
+        )
+
+    key = f"{cache_key}|{top}|{n_boot}"
+    calcular = st.button("▶️ Calcular contrafactual", type="primary", key="btn_cf")
+    # sem clique, só re-exibe o que JÁ foi calculado com estas opções — mudar
+    # um controle não pode disparar sozinho um ajuste caro
+    if not calcular and st.session_state.get("cf_key") != key:
+        st.info(
+            "Este cálculo ajusta um modelo preditivo dedicado — rode quando "
+            "quiser quantificar o efeito, não só ranqueá-lo.",
+            icon="🎯",
+        )
+        return
+    st.session_state["cf_key"] = key
+
+    cfm = _fit_cf(result, key, top, n_boot)
+    if not cfm.ok:
+        st.warning(f"Contrafactual indisponível: {cfm.skipped_reason}")
+        return
+    for n in cfm.notes:
+        st.caption(f"ℹ️ {n}")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(
+        "Poder do modelo (R² fora da amostra)",
+        f"{cfm.r2_oos:.2f}".replace(".", ",") if pd.notna(cfm.r2_oos) else "—",
+        help="Fração da variação do alvo que o modelo acerta em períodos que "
+             "ele não viu no treino. Contrafactual só vale a leitura se este "
+             "número for razoável.",
+    )
+    c2.metric(
+        "Erro típico do modelo",
+        f"±{cfm.resid_sigma:.4g}".replace(".", ",")
+        if pd.notna(cfm.resid_sigma) else "—",
+        help="Desvio-padrão do erro fora da amostra, na unidade do alvo — a "
+             "régua para saber se um desvio é grande.",
+    )
+    c3.metric(
+        "Alvo num período totalmente típico", f"{cfm.y_typical:.4g}".replace(".", ","),
+        help="Previsão do modelo com TODOS os indicadores na mediana "
+             "histórica — a linha de base de onde parte a repartição.",
+    )
+
+    # ---- repartição da variação ----------------------------------------
+    st.subheader("📊 De onde vem a variação do alvo")
+    var = _var_attr(cfm, key)
+    fig_var = pp.fig_variance_shares(var, result.target)
+    st.plotly_chart(fig_var, use_container_width=True)
+    for f in var.findings:
+        st.markdown(f"- {f}")
+    with st.expander("Ver tabela da repartição"):
+        st.dataframe(var.rows.drop(columns=["grupo"]), use_container_width=True)
+
+    # ---- cenários "e se estivesse típico" -------------------------------
+    st.subheader("🎯 E se cada indicador tivesse ficado no valor típico?")
+    scen = _scenarios(cfm, key)
+    fig_scen = pp.fig_scenarios(scen, conf=cfm.conf)
+    st.plotly_chart(fig_scen, use_container_width=True)
+    for f in scen.findings:
+        st.markdown(f"- {f}")
+    with st.expander("Ver tabela dos cenários"):
+        st.dataframe(scen.rows.drop(columns=["grupo"]), use_container_width=True)
+
+    # ---- curva de resposta ----------------------------------------------
+    st.subheader("📈 Curva de resposta — existe uma faixa boa?")
+    alvos = [g for g in cfm.group_order if g != OTHERS]
+    escolhido = st.selectbox(
+        "Indicador", alvos,
+        help="Simula o alvo com este indicador fixado em cada nível que ele "
+             "já assumiu no histórico, mantendo os demais como estiveram.",
+    )
+    curva = response_curve(cfm, escolhido)
+    fig_curva = pp.fig_response_curve(curva, conf=cfm.conf)
+    st.plotly_chart(fig_curva, use_container_width=True)
+    for f in curva.findings:
+        st.markdown(f"- {f}")
+
+    # ---- repartição do desvio de um período -----------------------------
+    st.subheader("🧾 Repartir o desvio de um período específico")
+    labels = list(cfm.index)
+    dia = st.selectbox(
+        "Período", list(reversed(labels)), format_func=_fmt_day,
+        key="cf_dia",
+        help="Só aparecem os períodos com todos os indicadores disponíveis "
+             "(as versões com defasagem exigem histórico anterior).",
+    )
+    day = attribute_day(cfm, dia)
+    fig_wf = pp.fig_day_waterfall(day, _fmt_day(dia))
+    st.plotly_chart(fig_wf, use_container_width=True)
+    fig_contrib = pp.fig_day_contributions(day, conf=cfm.conf)
+    st.plotly_chart(fig_contrib, use_container_width=True)
+    for f in day.findings:
+        st.markdown(f"- {f}")
+    with st.expander("Ver tabela do período"):
+        st.dataframe(day.rows.drop(columns=["grupo"]), use_container_width=True)
+    for c in day.cautions:
+        st.caption(f"⚠️ {c}")
+
+    # ---- relatório -------------------------------------------------------
+    item_id = hashlib.md5(f"m2cf|{key}|{dia}".encode()).hexdigest()[:12]
+    add_to_report_button(
+        {
+            "id": item_id,
+            "module": "Módulo 2 — Contrafactual",
+            "title": f"Contrafactual e repartição — '{result.target}'",
+            "texts": var.findings + scen.findings + curva.findings
+                     + day.findings
+                     + [f"Atenção: {c}" for c in
+                        dict.fromkeys(var.cautions + scen.cautions + day.cautions)],
+            "tables": {
+                "Repartição da variação": var.rows.drop(columns=["grupo"]),
+                "Cenários (e se estivesse típico)": scen.rows.drop(columns=["grupo"]),
+                f"Repartição do desvio de {_fmt_day(dia)}":
+                    day.rows.drop(columns=["grupo"]),
+            },
+            "figures": {
+                "repartição da variação": fig_var,
+                "cenários contrafactuais": fig_scen,
+                "curva de resposta": fig_curva,
+                "cascata do período": fig_wf,
+                "contribuições com IC": fig_contrib,
+            },
+        },
+        key=f"add_{item_id}",
+    )
 
 
 def _fmt_day(label) -> str:

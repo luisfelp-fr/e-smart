@@ -141,6 +141,278 @@ def fig_day_diagnosis(rows: pd.DataFrame, day_label: str) -> go.Figure:
     return fig
 
 
+def _err(point: pd.Series, lo: pd.Series, hi: pd.Series) -> dict:
+    """Barras de erro assimétricas a partir de (estimativa, IC-, IC+)."""
+    p = np.asarray(point, dtype=float)
+    plus = np.nan_to_num(np.asarray(hi, dtype=float) - p, nan=0.0)
+    minus = np.nan_to_num(p - np.asarray(lo, dtype=float), nan=0.0)
+    return dict(
+        type="data", symmetric=False,
+        array=np.clip(plus, 0, None), arrayminus=np.clip(minus, 0, None),
+        color=INK_2, thickness=1.4, width=5,
+    )
+
+
+def _label_after_err(fig: go.Figure, cats, point, lo, hi, texts) -> None:
+    """Rotula cada barra DEPOIS do traço do IC (e ajusta a folga do eixo).
+
+    O rótulo "outside" do Plotly encosta na ponta da barra — bem onde passa a
+    barra de erro. Aqui o número vai para fora do IC inteiro, então nada se
+    sobrepõe, e o eixo ganha margem para o texto caber.
+    """
+    p = np.asarray(point, dtype=float)
+    lo, hi = np.asarray(lo, dtype=float), np.asarray(hi, dtype=float)
+    ends = np.where(p >= 0, np.fmax(p, hi), np.fmin(p, lo))
+    ends = np.where(np.isfinite(ends), ends, p)
+    for cat, v, end, txt in zip(cats, p, ends, texts):
+        fig.add_annotation(
+            x=float(end), y=cat, text=txt, showarrow=False,
+            xanchor="left" if v >= 0 else "right",
+            xshift=7 if v >= 0 else -7,
+            font=dict(size=11, color=INK_2),
+        )
+    span = float(np.nanmax(np.append(ends, 0)) - np.nanmin(np.append(ends, 0)))
+    folga = max(span * 0.18, 1e-9)
+    fig.update_xaxes(range=[float(np.nanmin(np.append(ends, 0))) - folga * 0.4,
+                            float(np.nanmax(np.append(ends, 0))) + folga])
+
+
+def fig_variance_shares(var, target: str, top: int = 12) -> go.Figure:
+    """Repartição da variação do alvo entre os indicadores (com IC).
+
+    Uma barra por indicador (azul) mais a fatia cinza do que o modelo NÃO
+    explica — juntas fecham 100% da variação observada.
+    """
+    data = var.rows.head(top + 1).iloc[::-1]
+    is_resid = data["grupo"].eq("__residuo__")
+    colors = [MUTED if r else BLUE for r in is_resid]
+    hover = [
+        (f"<b>{r['indicador']}</b><br>fatia: {r['% da variação do alvo']:.1f}%"
+         + (f"<br>IC: {r['IC inferior']:.1f}% a {r['IC superior']:.1f}%"
+            if np.isfinite(r["IC inferior"]) else "<br>sem IC (bootstrap desligado)")
+         + (f"<br>do que o modelo explica: {r['% do que o modelo explica']:.1f}%"
+            if np.isfinite(r.get("% do que o modelo explica", np.nan)) else ""))
+        for _, r in data.iterrows()
+    ]
+    fig = go.Figure(go.Bar(
+        x=data["% da variação do alvo"], y=data["indicador"], orientation="h",
+        marker=dict(color=colors),
+        error_x=_err(data["% da variação do alvo"],
+                     data["IC inferior"], data["IC superior"]),
+        hovertext=hover, hoverinfo="text",
+    ))
+    _label_after_err(
+        fig, data["indicador"], data["% da variação do alvo"],
+        data["IC inferior"], data["IC superior"],
+        [f"{v:.0f}%" for v in data["% da variação do alvo"]],
+    )
+    r2 = var.r2_oos
+    sub = (f"cada barra é a fatia da variação de {target} atribuída ao "
+           f"indicador · traço horizontal = IC {int(100 * 0.95)}% · cinza = o "
+           "que os dados da planilha não explicam")
+    if np.isfinite(r2):
+        sub += f" · R² fora da amostra = {r2:.2f}"
+    fig.update_layout(
+        title=f"De onde vem a variação de {target}<br><sup>{sub}</sup>",
+        xaxis=dict(title="% da variação do alvo"),
+        height=max(320, 36 * len(data) + 160),
+        showlegend=False, **_LAYOUT,
+    )
+    _base_axes(fig)
+    fig.update_yaxes(gridcolor=SURFACE, automargin=True, ticksuffix="  ")
+    return fig
+
+
+def fig_day_waterfall(day, day_label: str, top: int = 8) -> go.Figure:
+    """Cascata: do período típico ao valor observado, passo a passo.
+
+    Cada degrau é a contribuição (Shapley) de um indicador; por construção os
+    degraus somam exatamente o desvio previsto, e o último trecho mostra o
+    que sobrou sem explicação.
+    """
+    rows = day.rows.copy()
+    head = rows.head(top)
+    resto = float(rows["contribuição"].iloc[top:].sum()) if len(rows) > top else 0.0
+
+    x = ["período típico"] + [str(i) for i in head["indicador"]]
+    y = [day.y_typical] + [float(v) for v in head["contribuição"]]
+    measure = ["absolute"] + ["relative"] * len(head)
+    if abs(resto) > 1e-12:
+        x.append(f"demais ({len(rows) - top})")
+        y.append(resto)
+        measure.append("relative")
+    # a cascata termina no PREVISTO; o observado entra como linha de
+    # referência — assim o resíduo aparece como a distância entre os dois sem
+    # virar mais uma barra colorida (que se leria como "mais um culpado")
+    x += ["previsto pelo modelo"]
+    y += [0.0]
+    measure += ["total"]
+
+    fig = go.Figure(go.Waterfall(
+        orientation="v", x=x, y=y, measure=measure,
+        increasing=dict(marker=dict(color=POS)),
+        decreasing=dict(marker=dict(color=NEG)),
+        totals=dict(marker=dict(color=MUTED)),
+        connector=dict(line=dict(color=BASELINE, width=1)),
+        text=[f"{v:+.4g}".replace(".", ",") if m == "relative"
+              else "" for v, m in zip(y, measure)],
+        textposition="outside", textfont=dict(size=11, color=INK_2),
+        cliponaxis=False,
+        hovertemplate="%{x}<br>%{y:.4g}<extra></extra>",
+    ))
+    fig.add_hline(
+        y=day.y_observed, line_color=INK_2, line_width=1.5, line_dash="dash",
+        annotation_text=f"observado: {day.y_observed:.4g}".replace(".", ","),
+        annotation_position="top left",
+        annotation_font=dict(size=11, color=INK_2),
+    )
+
+    sub = ("parte-se do período típico e soma-se a contribuição de cada "
+           "indicador (azul empurra para cima, vermelho para baixo)<br>"
+           "as contribuições fecham exatamente o previsto · a distância até a "
+           "linha tracejada é o que os indicadores NÃO explicam")
+    # com contribuições pequenas diante do nível do alvo, o eixo em zero
+    # achataria os degraus a ponto de sumirem
+    caminho = np.cumsum([day.y_typical] + y[1:-1])
+    lo, hi = float(min(caminho.min(), day.y_observed)), \
+        float(max(caminho.max(), day.y_observed))
+    yaxis = dict(title=day.target)
+    if lo > 0 and (hi - lo) < 0.35 * hi:
+        folga = 0.25 * max(hi - lo, 1e-9)
+        yaxis["range"] = [lo - folga, hi + folga]
+        sub += " · atenção: o eixo não começa em zero"
+
+    layout = {**_LAYOUT, "margin": dict(l=70, r=40, t=115, b=90)}
+    fig.update_layout(
+        title=f"Como se formou o resultado de {day_label}<br><sup>{sub}</sup>",
+        yaxis=yaxis, height=480, showlegend=False, **layout,
+    )
+    _base_axes(fig)
+    fig.update_xaxes(tickangle=-30, automargin=True)
+    return fig
+
+
+def fig_day_contributions(day, top: int = 10, conf: float = 0.95) -> go.Figure:
+    """Contribuição de cada indicador ao desvio do dia, com intervalo."""
+    data = day.rows.head(top).iloc[::-1]
+    colors = [POS if v > 0 else NEG for v in data["contribuição"]]
+    hover = [
+        (f"<b>{r['indicador']}</b><br>contribuição: {r['contribuição']:.4g}"
+         + (f"<br>IC: {r['IC inferior']:.4g} a {r['IC superior']:.4g}"
+            if np.isfinite(r["IC inferior"]) else "<br>sem IC")
+         + f"<br>{r['% do desvio']:.0f}% do desvio do dia"
+         + (f"<br>valor no dia: {r['valor no dia']:.4g} "
+            f"(percentil {r['percentil no dia']:.0f})"
+            if np.isfinite(r["valor no dia"]) else "")
+         + (f"<br>contraprova por vizinhos: {r['efeito pelos vizinhos']:.4g}"
+            if np.isfinite(r["efeito pelos vizinhos"]) else
+            "<br>sem períodos parecidos (extrapolação)"))
+        for _, r in data.iterrows()
+    ]
+    fig = go.Figure(go.Bar(
+        x=data["contribuição"], y=data["indicador"], orientation="h",
+        marker=dict(color=colors),
+        error_x=_err(data["contribuição"], data["IC inferior"],
+                     data["IC superior"]),
+        hovertext=hover, hoverinfo="text",
+    ))
+    _label_after_err(
+        fig, data["indicador"], data["contribuição"], data["IC inferior"],
+        data["IC superior"],
+        [f"{v:.3g}".replace(".", ",") for v in data["contribuição"]],
+    )
+    fig.add_vline(x=0, line_color=BASELINE, line_width=1)
+    fig.update_layout(
+        title="Contribuição de cada indicador ao desvio do dia"
+              f"<br><sup>traço horizontal = intervalo de confiança "
+              f"{int(conf * 100)}% (bootstrap por blocos + erro de "
+              "amostragem do Shapley) · barras que cruzam o zero não são "
+              "conclusivas</sup>",
+        xaxis=dict(title=f"contribuição ({day.target})"),
+        height=max(320, 36 * len(data) + 160),
+        showlegend=False, **_LAYOUT,
+    )
+    _base_axes(fig)
+    fig.update_yaxes(gridcolor=SURFACE, automargin=True, ticksuffix="  ")
+    return fig
+
+
+def fig_scenarios(scen, top: int = 12, conf: float = 0.95) -> go.Figure:
+    """Deslocamento típico do alvo causado por cada indicador (com IC)."""
+    data = scen.rows.head(top).iloc[::-1]
+    hover = [
+        (f"<b>{r['indicador']}</b><br>deslocamento típico: "
+         f"{r['deslocamento típico']:.4g}"
+         + (f"<br>IC: {r['deslocamento IC-']:.4g} a {r['deslocamento IC+']:.4g}"
+            if np.isfinite(r["deslocamento IC-"]) else "<br>sem IC")
+         + f"<br>maior deslocamento: {r['maior deslocamento']:.4g}"
+         + f"<br>efeito no nível médio: {r['efeito no nível médio']:.4g}"
+         + f"<br>fora do típico em {r['% do tempo fora do típico']:.0f}% do tempo")
+        for _, r in data.iterrows()
+    ]
+    fig = go.Figure(go.Bar(
+        x=data["deslocamento típico"], y=data["indicador"], orientation="h",
+        marker=dict(color=BLUE),
+        error_x=_err(data["deslocamento típico"], data["deslocamento IC-"],
+                     data["deslocamento IC+"]),
+        hovertext=hover, hoverinfo="text",
+    ))
+    _label_after_err(
+        fig, data["indicador"], data["deslocamento típico"],
+        data["deslocamento IC-"], data["deslocamento IC+"],
+        [f"{v:.3g}".replace(".", ",") for v in data["deslocamento típico"]],
+    )
+    fig.update_layout(
+        title=f"Quanto cada indicador desloca {scen.target}, em média, por período"
+              "<br><sup>contrafactual: diferença média (em módulo) entre o que "
+              "aconteceu e o que aconteceria com o indicador sempre no valor "
+              f"típico · traço horizontal = IC {int(conf * 100)}%</sup>",
+        xaxis=dict(title=f"deslocamento típico ({scen.target})"),
+        height=max(320, 36 * len(data) + 160),
+        showlegend=False, **_LAYOUT,
+    )
+    _base_axes(fig)
+    fig.update_yaxes(gridcolor=SURFACE, automargin=True, ticksuffix="  ")
+    return fig
+
+
+def fig_response_curve(curve, conf: float = 0.95) -> go.Figure:
+    """Curva contrafactual: alvo previsto para cada nível do indicador."""
+    r = curve.rows
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=list(r["valor do indicador"]) + list(r["valor do indicador"])[::-1],
+        y=list(r["IC superior"]) + list(r["IC inferior"])[::-1],
+        fill="toself", fillcolor="rgba(42,120,214,0.14)", mode="lines",
+        line=dict(width=0), hoverinfo="skip", showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=r["valor do indicador"], y=r["alvo previsto"], mode="lines+markers",
+        line=dict(color=BLUE, width=2), marker=dict(size=8),
+        customdata=r["percentil"],
+        hovertemplate=(f"{curve.group}" + ": %{x:.4g} (percentil %{customdata})"
+                       f"<br>{curve.target} previsto: %{{y:.4g}}<extra></extra>"),
+        showlegend=False,
+    ))
+    if np.isfinite(curve.typical):
+        fig.add_vline(x=curve.typical, line_color=BASELINE, line_width=1.5,
+                      line_dash="dot", annotation_text="valor típico",
+                      annotation_position="top",
+                      annotation_font=dict(size=11, color=MUTED))
+    fig.update_layout(
+        title=f"Se '{curve.group}' ficasse em cada nível, onde estaria "
+              f"{curve.target}?"
+              "<br><sup>contrafactual do modelo, mantendo os demais "
+              "indicadores como estiveram · faixa sombreada = IC "
+              f"{int(conf * 100)}% · só percentis observados (sem "
+              "extrapolação)</sup>",
+        xaxis_title=str(curve.group), yaxis_title=f"{curve.target} previsto",
+        height=400, **_LAYOUT,
+    )
+    _base_axes(fig)
+    return fig
+
+
 def fig_corr_heatmap(df: pd.DataFrame, target: str, max_cols: int = 25) -> go.Figure:
     """Mapa de calor de Spearman (divergente vermelho-cinza-azul)."""
     cols = [target] + [c for c in df.columns if c != target][: max_cols - 1]

@@ -73,6 +73,33 @@ pensado para dados industriais, que raramente são lineares ou normais.
   versão leve da ideia de *causal discovery* (independência condicional, como
   no PC/PCMCI), escolhida no lugar do PCMCI completo por custo computacional
   e robustez com indicadores correlacionados.
+- **Contrafactual e repartição** (aba do Módulo 2): o ranking diz *quem*
+  influencia; esta aba diz **quanto**, na unidade do alvo. Um modelo dedicado é
+  consultado duas vezes — com os valores que de fato ocorreram e com o
+  indicador forçado ao **valor típico** (mediana histórica) — e a diferença é o
+  efeito atribuído. Entrega quatro respostas:
+  - **De onde vem a variação do alvo**: fatias por indicador que somam 100% do
+    que o modelo explica, mais uma fatia explícita de **"não explicado"**
+    (fatores fora da planilha + ruído). A repartição usa o **valor de Shapley**
+    (amostragem de permutações), a única divisão em que as fatias fecham
+    exatamente o total.
+  - **"E se este indicador tivesse ficado no valor típico?"**: de quanto o alvo
+    se desloca, em média, por período — e no pior período.
+  - **Repartição do desvio de um período**: gráfico em cascata do período
+    típico até o previsto, um degrau por indicador; a distância até o valor
+    observado é o que os indicadores **não** explicam.
+  - **Curva de resposta**: o alvo previsto com o indicador fixado em cada nível
+    que ele já assumiu — mostra a faixa boa sem supor relação linear.
+
+  Tudo sai com **intervalo de confiança** (bootstrap por blocos, que preserva a
+  autocorrelação da série; no Shapley soma-se o erro de amostragem das
+  permutações). Métricas do mesmo indicador físico (média, máximo, P90 de uma
+  mesma variável) são movidas **juntas**: simular "o máximo estava normal" com
+  "a média como esteve" seria um cenário impossível no processo real. E cada
+  contrafactual do topo passa por uma **contraprova sem modelo** — o alvo
+  observado em períodos parecidos, mas com aquele indicador normal; quando não
+  existem períodos parecidos, o app diz que ali o modelo está extrapolando em
+  vez de devolver um número sem lastro.
 - **Diagnóstico do dia** (aba do Módulo 2): escolha um dia/período e veja os
   prováveis contribuintes daquele dia — cruzamento do ranking histórico com a
   atipicidade de cada indicador no dia (percentil do valor do dia no próprio
@@ -157,6 +184,9 @@ O motor de análise causal também funciona como CLI/biblioteca:
 
 ```bash
 python -m causal_analysis dados.csv --alvo rendimento
+
+# com a seção contrafactual (repartição da variação + cenários, com IC)
+python -m causal_analysis dados.csv --alvo rendimento --contrafactual
 ```
 
 ```python
@@ -167,12 +197,30 @@ print(resultado.scores)          # ranking com scores e vereditos
 render_report(resultado, "relatorio.html")
 ```
 
+O motor contrafactual também é usável direto:
+
+```python
+from causal_analysis import (
+    fit_counterfactual_model, variance_attribution,
+    scenario_effects, attribute_day, response_curve,
+)
+
+modelo = fit_counterfactual_model(resultado, top=8, n_boot=8)
+variance_attribution(modelo).rows   # fatias da variação do alvo, com IC
+scenario_effects(modelo).rows       # "e se estivesse no valor típico", com IC
+attribute_day(modelo, rotulo).rows  # reparte o desvio de um período (Shapley)
+response_curve(modelo, "temperatura").rows   # curva contrafactual por nível
+```
+
+`n_boot=0` desliga o comitê de bootstrap: sai mais rápido, sem intervalos de
+confiança.
+
 ## Estrutura do código
 
 ```
 app/               interface Streamlit (páginas e componentes)
 capability/        motor do Módulo 1 (carta I-AM, normalidade, índices)
-causal_analysis/   motor do Módulo 2 (testes, ML, scores, relatório)
+causal_analysis/   motor do Módulo 2 (testes, ML, scores, contrafactual)
 shared/            leitura de planilhas, multi-aba e exportação PDF
 examples/          dados sintéticos com estrutura causal conhecida
 tests/             testes unitários e de integração
@@ -203,3 +251,15 @@ dividem a "culpa". Use os resultados para priorizar hipóteses e confirme com
 testes controlados no processo. Nos índices de capabilidade, processos fora de
 controle estatístico (causas especiais na carta) produzem índices pouco
 confiáveis — trate a estabilidade primeiro.
+
+O **contrafactual é do modelo, não do processo**: ele responde "o que o modelo
+preveria se X estivesse no valor típico, mantendo o resto como esteve". Isso
+vira leitura causal apenas sob três condições — nada relevante ficou fora da
+planilha, o modelo acertou a forma da relação, e o cenário simulado existe no
+histórico. A terceira é medida explicitamente (a contraprova por períodos
+parecidos avisa quando o cenário é extrapolação); as duas primeiras dependem do
+seu conhecimento do processo. O intervalo de confiança cobre a incerteza de
+amostragem e de ajuste do modelo — **não** cobre viés por fator não medido, que
+nenhum intervalo consegue cobrir. Um R² fora da amostra baixo invalida a
+leitura: com o modelo errando muito, a repartição descreve o modelo, não o
+processo.

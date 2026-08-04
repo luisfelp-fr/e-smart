@@ -188,7 +188,73 @@ TEMPLATE = Template(
   </div>
   {% endfor %}
 
-  <h2>5. Diagnóstico dos dados</h2>
+  {% if cf %}
+  <h2>5. Contrafactual: quanto cada indicador pesou</h2>
+  <div class="card">
+    <p class="note">As seções anteriores medem a <em>força da evidência</em>.
+       Esta responde <em>quanto</em>, na unidade de {{ target }}: um modelo é
+       consultado com os valores que de fato ocorreram e com cada indicador
+       forçado ao seu <strong>valor típico</strong> (mediana histórica); a
+       diferença é o efeito atribuído. A repartição usa o <strong>valor de
+       Shapley</strong>, em que as fatias somam exatamente o total, e todos os
+       números vêm com intervalo de confiança por <strong>bootstrap por
+       blocos</strong>.</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="v">{{ cf.r2 }}</div>
+        <div class="l">R² fora da amostra do modelo contrafactual</div></div>
+      <div class="kpi"><div class="v">±{{ cf.sigma }}</div>
+        <div class="l">erro típico do modelo ({{ target }})</div></div>
+      <div class="kpi"><div class="v">{{ cf.typical }}</div>
+        <div class="l">{{ target }} num período totalmente típico</div></div>
+    </div>
+  </div>
+
+  <h3>5.1. De onde vem a variação de {{ target }}</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Indicador</th><th>% da variação do alvo</th>
+      <th>IC {{ cf.conf }}%</th></tr></thead>
+    <tbody>
+    {% for r in cf.variance_rows %}
+      <tr><td><strong>{{ r.nome }}</strong></td><td>{{ r.share }}</td>
+        <td>{{ r.ic }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <ul class="note">{% for f in cf.variance_findings %}<li>{{ f }}</li>{% endfor %}</ul>
+
+  <h3>5.2. E se cada indicador tivesse ficado no valor típico?</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Indicador</th><th>Deslocamento típico</th>
+      <th>IC {{ cf.conf }}%</th><th>Efeito no nível médio</th>
+      <th>Maior deslocamento</th><th>% do tempo fora do típico</th></tr></thead>
+    <tbody>
+    {% for r in cf.scenario_rows %}
+      <tr><td><strong>{{ r.nome }}</strong></td><td>{{ r.swing }}</td>
+        <td>{{ r.ic }}</td><td>{{ r.level }}</td><td>{{ r.peak }}</td>
+        <td>{{ r.fora }}%</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <ul class="note">{% for f in cf.scenario_findings %}<li>{{ f }}</li>{% endfor %}</ul>
+
+  <div class="card">
+    <p><strong>Como ler.</strong> O <em>deslocamento típico</em> é a diferença
+       média (em módulo) entre o que aconteceu e o que aconteceria com o
+       indicador sempre no valor típico — mede o TAMANHO do efeito. Como é um
+       módulo, é sempre positivo: ele não prova que o efeito existe. Para isso,
+       use o IC do <em>efeito no nível médio</em>, o IC da fatia da variação e
+       o score do ranking.</p>
+    <ul>
+    {% for c in cf.cautions %}<li>{{ c }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <h2>{{ 6 if cf else 5 }}. Diagnóstico dos dados</h2>
   <div class="kpi-row">
     <div class="kpi"><div class="v">{{ n_obs }}</div>
       <div class="l">observações utilizadas (de {{ n_rows_raw }} linhas)</div></div>
@@ -218,7 +284,7 @@ TEMPLATE = Template(
   </details>
   {% endif %}
 
-  <h2>6. Metodologia e limitações</h2>
+  <h2>{{ 7 if cf else 6 }}. Metodologia e limitações</h2>
   <div class="card">
     <p><strong>Como o score é construído.</strong> Cada parâmetro é avaliado por
     sete linhas de evidência complementares: (1) correlação de Pearson mede
@@ -299,8 +365,55 @@ def _dir_hint(row) -> str:
     return ""
 
 
-def render_report(result: AnalysisResult, output_path: str, top_detail: int = 5) -> str:
-    """Monta o HTML final e grava em ``output_path``. Devolve o caminho."""
+def _num(v, nd: int = 4) -> str:
+    """Número para o relatório; "—" quando ausente."""
+    return "—" if v is None or not np.isfinite(v) else f"{v:.{nd}g}"
+
+
+def _cf_context(cfm, variance, scenarios) -> dict:
+    """Contexto do bloco contrafactual do relatório (tabelas e frases)."""
+    conf = int(round(cfm.conf * 100))
+
+    def ic(lo, hi, nd=3) -> str:
+        if not (np.isfinite(lo) and np.isfinite(hi)):
+            return "—"
+        return f"{_num(lo, nd)} a {_num(hi, nd)}"
+
+    return {
+        "conf": conf,
+        "r2": _num(cfm.r2_oos, 2),
+        "sigma": _num(cfm.resid_sigma, 3),
+        "typical": _num(cfm.y_typical, 4),
+        "variance_rows": [
+            {"nome": r["indicador"], "share": f"{r['% da variação do alvo']:.1f}%",
+             "ic": (f"{r['IC inferior']:.1f}% a {r['IC superior']:.1f}%"
+                    if np.isfinite(r["IC inferior"]) else "—")}
+            for _, r in variance.rows.iterrows()
+        ],
+        "variance_findings": variance.findings,
+        "scenario_rows": [
+            {"nome": r["indicador"], "swing": _num(r["deslocamento típico"], 3),
+             "ic": ic(r["deslocamento IC-"], r["deslocamento IC+"]),
+             "level": _num(r["efeito no nível médio"], 3)
+             + ("" if r["efeito no nível é conclusivo"] == "sim" else " (IC cruza 0)"),
+             "peak": _num(r["maior deslocamento"], 3),
+             "fora": f"{r['% do tempo fora do típico']:.0f}"}
+            for _, r in scenarios.rows.iterrows()
+        ],
+        "scenario_findings": scenarios.findings,
+        "cautions": list(dict.fromkeys(variance.cautions + scenarios.cautions)),
+    }
+
+
+def render_report(result: AnalysisResult, output_path: str, top_detail: int = 5,
+                  counterfactual: bool | dict = False) -> str:
+    """Monta o HTML final e grava em ``output_path``. Devolve o caminho.
+
+    ``counterfactual=True`` ajusta o modelo contrafactual e acrescenta a seção
+    com a repartição da variação e os cenários "e se estivesse típico" (com
+    intervalos de confiança). Passe um dicionário para repassar argumentos a
+    ``fit_counterfactual_model`` (ex.: ``{"n_boot": 12, "top": 10}``).
+    """
     scores = result.scores
     assert scores is not None
     df, target = result.df, result.target
@@ -443,6 +556,21 @@ def render_report(result: AnalysisResult, output_path: str, top_detail: int = 5)
         if diag.missing_pct.get(c, 0) > 0 or diag.interpolated.get(c, 0) > 0
     ]
 
+    cf_ctx = None
+    if counterfactual:
+        from .counterfactual import (
+            fit_counterfactual_model,
+            scenario_effects,
+            variance_attribution,
+        )
+
+        kwargs = counterfactual if isinstance(counterfactual, dict) else {}
+        cfm = fit_counterfactual_model(result, **kwargs)
+        if cfm.ok:
+            cf_ctx = _cf_context(
+                cfm, variance_attribution(cfm), scenario_effects(cfm)
+            )
+
     from . import __version__
 
     html = TEMPLATE.render(
@@ -467,6 +595,7 @@ def render_report(result: AnalysisResult, output_path: str, top_detail: int = 5)
         freq=diag.freq or "irregular",
         diag_notes=diag.notes,
         missing_rows=missing_rows,
+        cf=cf_ctx,
         version=__version__,
     )
     with open(output_path, "w", encoding="utf-8") as fh:

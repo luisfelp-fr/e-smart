@@ -60,6 +60,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--top-detalhe", type=int, default=5,
         help="Máximo de parâmetros com seção detalhada no relatório (padrão: 5)",
     )
+    p.add_argument(
+        "--contrafactual", action="store_true",
+        help="Acrescenta ao relatório a seção contrafactual: quanto da "
+             "variação do alvo cabe a cada indicador e o que teria "
+             "acontecido se cada um estivesse no valor típico (com IC). "
+             "Ajusta um modelo extra — mais lento.",
+    )
+    p.add_argument(
+        "--replicas-bootstrap", type=int, default=8, dest="replicas",
+        help="Réplicas de bootstrap dos intervalos de confiança do "
+             "contrafactual; 0 desliga os intervalos (padrão: 8)",
+    )
     p.add_argument("--silencioso", action="store_true", help="Suprime o progresso")
     return p
 
@@ -84,7 +96,12 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, FileNotFoundError) as exc:
         print(f"Erro: {exc}", file=sys.stderr)
         return 1
-    out = render_report(result, args.saida, top_detail=args.top_detalhe)
+    if args.contrafactual and not args.silencioso:
+        print("Ajustando o modelo contrafactual (repartição e intervalos)...")
+    out = render_report(
+        result, args.saida, top_detail=args.top_detalhe,
+        counterfactual={"n_boot": args.replicas} if args.contrafactual else False,
+    )
     if not args.silencioso:
         scores = result.scores
         culprits = scores[scores["veredito"].str.startswith("Culpado")]
