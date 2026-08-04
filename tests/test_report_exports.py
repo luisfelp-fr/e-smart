@@ -100,12 +100,15 @@ def test_thin_rarefaz_mantendo_extremos():
 def test_lag_phrase_traduzido_para_escala_de_tempo():
     step = pd.Timedelta(hours=4)
     frase = _lag_phrase("lag 3", step)
-    assert "3 período(s)" in frase
-    assert "12 horas" in frase
+    # o tempo real é a informação útil; "3 períodos" obrigava a converter
+    assert "12 horas" in frase  # 3 passos de 4h
+    assert "período" not in frase
     frase_mm = _lag_phrase("média móvel 7", step)
     assert "28 horas" in frase_mm  # 7 janelas de 4h
-    # sem datas: nenhuma tradução é inventada
-    assert "≈" not in _lag_phrase("lag 3", None)
+    assert "período" not in frase_mm
+    # sem datas não há duração a inventar: a unidade honesta é a medição
+    sem_datas = _lag_phrase("lag 3", None)
+    assert "3 medições" in sem_datas and "período" not in sem_datas
     assert _lag_phrase("bruto (sem defasagem)", step).startswith(
         "o efeito é imediato"
     )

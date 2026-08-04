@@ -23,21 +23,67 @@ from .pipeline import AnalysisResult
 from .scoring import ML_MIN_R2
 
 _DIRECTION_PHRASES = {
-    "positiva": "quando {nome} sobe, {alvo} tende a SUBIR",
-    "negativa": "quando {nome} sobe, {alvo} tende a CAIR",
+    "positiva": "quando {nome} sobe, {alvo} tende a subir",
+    "negativa": "quando {nome} sobe, {alvo} tende a cair",
     "não-monotônica": (
-        "{nome} afeta {alvo} de forma não-linear — existe uma faixa ideal; "
-        "tanto valores muito altos quanto muito baixos pioram o resultado"
+        "{nome} tem uma faixa ideal: tanto valores muito altos quanto muito "
+        "baixos pioram {alvo}"
     ),
-    "indefinida": "a direção do efeito de {nome} sobre {alvo} não ficou clara",
+    "indefinida": "{nome} influencia {alvo}, mas a direção do efeito não ficou clara",
 }
 
+# Compactas de propósito: a explicação da escala aparece UMA vez no resumo.
+# Repetir "com vários testes independentes apontando na mesma direção" ao fim
+# de cada achado é o que tornava a leitura cansativa.
 _CONFIDENCE_PHRASES = {
-    "Alta": "evidência forte (vários testes independentes concordam)",
-    "Média": "evidência moderada (mais de um teste aponta o efeito)",
-    "Baixa": "evidência inicial (apenas um teste significativo)",
-    "Nenhuma": "sem confirmação estatística",
+    "Alta": "A evidência é forte",
+    "Média": "A evidência é moderada",
+    "Baixa": "A evidência é inicial",
+    "Nenhuma": "Não há confirmação estatística",
 }
+
+# Como cada métrica derivada aparece dentro de uma frase. As descrições de
+# METRIC_FRIENDLY são boas para tabela, mas travam a leitura no meio de um
+# período ("'temp' — valor central na janela (robusto a picos) sobe"); aqui a
+# forma é um sujeito que encaixa direto: "o valor central de temp sobe".
+_METRIC_PROSE = {
+    "média": "a média de {base}",
+    "mediana": "o valor central de {base}",
+    "mínimo": "o mínimo de {base}",
+    "máximo": "o pico de {base}",
+    "desvio": "a instabilidade de {base}",
+    "P10": "o piso de {base}",
+    "P90": "o teto de {base}",
+    "% tempo>Q3": "o tempo que {base} passa na faixa alta",
+    "% tempo<Q1": "o tempo que {base} passa na faixa baixa",
+}
+
+
+_NUMEROS = {1: "um", 2: "dois", 3: "três", 4: "quatro", 5: "cinco",
+            6: "seis", 7: "sete", 8: "oito", 9: "nove", 10: "dez"}
+
+
+def _numero(n: int) -> str:
+    """Números pequenos por extenso — "três fatores" lê melhor que "3 fator(es)"."""
+    return _NUMEROS.get(n, str(n))
+
+
+def _lista(itens: list[str]) -> str:
+    """Enumeração com "e" antes do último, como se escreve de verdade."""
+    if not itens:
+        return ""
+    if len(itens) == 1:
+        return itens[0]
+    return f"{', '.join(itens[:-1])} e {itens[-1]}"
+
+
+def _uc_first(texto: str) -> str:
+    """Maiúscula só na primeira letra.
+
+    ``str.capitalize()`` minusculiza todo o resto — um indicador chamado
+    ``Temp_Forno`` virava ``temp_forno`` no texto do relatório.
+    """
+    return texto[:1].upper() + texto[1:] if texto else texto
 
 
 @dataclass
@@ -52,15 +98,15 @@ class ManagerialReport:
 
 
 def _friendly_name(column: str) -> str:
-    """"forno: temp (P90)" -> "o teto típico (percentil 10..) de temp"."""
+    """"forno: temp (P90)" -> "o teto de temp" — sujeito pronto para a frase."""
     base = base_indicator(column)
     metric = metric_of(column)
     if metric is None:
-        return f"'{base}'"
-    desc = METRIC_FRIENDLY.get(metric)
-    if desc is None:
-        return f"'{base}' ({metric})"
-    return f"'{base}' — {desc}"
+        return base
+    prose = _METRIC_PROSE.get(metric)
+    if prose is None:
+        return f"{base} na métrica {metric}"
+    return prose.format(base=base)
 
 
 # formatação humanizada de durações centralizada em aggregation.fmt_timedelta_br
@@ -82,32 +128,54 @@ def _time_step(index) -> tuple[pd.Timedelta | None, str]:
     return None, ""
 
 
-def _in_time_units(k_txt: str, step: pd.Timedelta | None) -> str:
-    """Traduz "k períodos" para a escala de tempo dos dados, se conhecida."""
-    if step is None:
-        return ""
+def _span(k_txt: str, step: pd.Timedelta | None) -> str:
+    """Duração de ``k`` passos em tempo real; "k medições" sem data/hora.
+
+    A escala de tempo é o que o leitor precisa: "o efeito aparece 3 horas
+    depois" é acionável, "3 períodos depois" obriga a converter de cabeça.
+    Sem coluna de data/hora não dá para saber a duração, e aí a unidade
+    honesta é a medição.
+    """
     try:
         k = int(k_txt)
     except (TypeError, ValueError):
-        return ""
-    return f" (≈ {_fmt_timedelta_br(step * k)} na escala destes dados)"
+        return k_txt
+    if step is None:
+        return f"{k} medições" if k != 1 else "1 medição"
+    return _fmt_timedelta_br(step * k)
+
+
+def _cadencia(step_txt: str) -> str:
+    """Frequência das medições sem o "1" solto ("por dia", "a cada 4 horas")."""
+    if step_txt.startswith("1 "):
+        return f"por {step_txt[2:]}"
+    return f"a cada {step_txt}"
 
 
 def _lag_phrase(transform_label: str, step: pd.Timedelta | None = None) -> str:
+    """Quando o efeito aparece, em tempo real e sem jargão."""
     if transform_label.startswith("lag"):
-        k = transform_label.split()[1]
         return (
-            f"o efeito aparece cerca de {k} período(s)"
-            f"{_in_time_units(k, step)} DEPOIS da variação (efeito com atraso)"
+            f"o efeito aparece cerca de {_span(transform_label.split()[1], step)} "
+            "depois da variação"
         )
     if transform_label.startswith("média móvel"):
-        w = transform_label.split()[2]
+        # "de" e não "das últimas": concorda com singular e plural sem
+        # remendo ("o acumulado de 1 semana", "o acumulado de 7 horas")
         return (
-            f"o que importa é o acumulado de ~{w} período(s)"
-            f"{_in_time_units(w, step)}, não o valor instantâneo "
-            "(efeito de permanência)"
+            f"o que pesa é o acumulado de {_span(transform_label.split()[2], step)}, "
+            "não o valor do momento"
         )
-    return "o efeito é imediato (mesmo período)"
+    return "o efeito é imediato"
+
+
+def _lag_short(transform_label: str, step: pd.Timedelta | None = None) -> str:
+    """Mesma informação em forma de célula de tabela: "3 horas depois"."""
+    if transform_label.startswith("lag"):
+        return f"{_span(transform_label.split()[1], step)} depois"
+    if transform_label.startswith("média móvel"):
+        return f"acumulado de {_span(transform_label.split()[2], step)}"
+    return "imediato"
 
 
 def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialReport:
@@ -135,32 +203,34 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
             "a granularidade dos dados."
         )
     else:
-        lideres = ", ".join(
-            f"'{base_indicator(p)}'" for p in
-            dict.fromkeys(relevant.head(3)["parametro"].map(base_indicator))
-        )
-        rep.headline = (
-            f"{n_rel} fator(es) apresentaram influência relevante sobre "
-            f"'{alvo}'. Principais: {lideres}."
-        )
+        nomes = list(dict.fromkeys(relevant.head(3)["parametro"].map(base_indicator)))
+        lideres = _lista(nomes)
+        if n_rel == 1:
+            rep.headline = f"Um fator mostrou influência relevante sobre {alvo}: {lideres}."
+        elif n_rel <= len(nomes):
+            rep.headline = (
+                f"{_uc_first(_numero(n_rel))} fatores mostraram influência "
+                f"relevante sobre {alvo}: {lideres}."
+            )
+        else:
+            rep.headline = (
+                f"{_uc_first(_numero(n_rel))} fatores mostraram influência "
+                f"relevante sobre {alvo}. Os principais são {lideres}."
+            )
+        escala = f", uma {_cadencia(step_txt)}" if step_txt else ""
         rep.summary = (
-            f"A análise combinou vários métodos estatísticos independentes "
-            f"(correlações, efeitos com atraso, precedência temporal e um "
-            f"modelo preditivo) sobre {result.diagnostics.n_rows_used} "
-            f"observações. O ranking abaixo ordena os fatores pela força "
-            f"conjunta dessas evidências (score 0–100)."
+            f"A análise cruzou correlações, efeitos com atraso, precedência "
+            f"temporal e um modelo preditivo sobre "
+            f"{result.diagnostics.n_rows_used} medições{escala}. O ranking "
+            f"ordena os fatores pela força conjunta dessas evidências, numa "
+            f"escala de 0 a 100. A evidência é forte quando vários testes "
+            f"independentes concordam, moderada quando mais de um aponta o "
+            f"efeito, e inicial quando apenas um a sustenta."
         )
-    # deixa explícito quanto vale "1 período" na escala de tempo do indicador
-    if step_txt:
+    if not step_txt and n_rel:
         rep.summary += (
-            f" Nestes dados, 1 período corresponde a {step_txt} "
-            "(intervalo típico entre medições do alvo) — os atrasos citados "
-            "abaixo já aparecem traduzidos para essa escala."
-        )
-    else:
-        rep.summary += (
-            " A planilha não tem coluna de data/hora, então 1 período "
-            "equivale a 1 linha da planilha (uma medição)."
+            " A planilha não tem coluna de data e hora, então os atrasos "
+            "abaixo aparecem em número de medições."
         )
 
     for _, row in scores.head(top).iterrows():
@@ -169,23 +239,27 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         nome = _friendly_name(row["parametro"])
         direcao = _DIRECTION_PHRASES.get(
             row["direcao_label"], _DIRECTION_PHRASES["indefinida"]
-        ).format(nome=nome, alvo=f"'{alvo}'")
+        ).format(nome=nome, alvo=alvo)
+        quando = _lag_phrase(str(row["melhor_transformacao"]), step)
+        confianca = _CONFIDENCE_PHRASES.get(row["confianca"], row["confianca"])
+
+        # Uma frase para o efeito, outra para a evidência. Antes eram três
+        # fragmentos empilhados, cada um terminando em parênteses de jargão.
         frase = (
-            f"{direcao.capitalize()}. "
-            f"{_lag_phrase(str(row['melhor_transformacao']), step).capitalize()}. "
-            f"Confiança: {_CONFIDENCE_PHRASES.get(row['confianca'], row['confianca'])} "
-            f"(score {row['score']:.0f}/100)."
+            f"{_uc_first(direcao)}, e {quando}. "
+            f"{confianca} e o score fica em {row['score']:.0f} de 100."
         )
+
         efeito = str(row.get("efeito", "—"))
         if efeito.startswith("indireto"):
             via = efeito.split("via ")[-1].rstrip(")") if "via" in efeito else ""
             frase += (
-                f" Atenção: ao descontar os demais indicadores do topo, a "
-                f"associação enfraquece — o efeito parece passar por "
-                f"'{base_indicator(via)}' (indício de efeito indireto)."
+                " Ao descontar os outros indicadores do topo a associação "
+                f"enfraquece, o que sugere que o efeito passa por "
+                f"{base_indicator(via)}."
                 if via else
-                " Atenção: indício de efeito indireto (a associação "
-                "enfraquece ao descontar os demais indicadores do topo)."
+                " Ao descontar os outros indicadores do topo a associação "
+                "enfraquece, o que sugere um efeito indireto."
             )
         rep.findings.append(frase)
 
@@ -195,10 +269,10 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         "priorizar hipóteses e confirme com testes controlados no processo."
     )
     rep.cautions.append(
-        "O ranking testa a melhor entre várias defasagens e médias móveis por "
-        "indicador, e as linhas de evidência se sobrepõem entre si — isso "
-        "favorece encontrar associação. Leia a ORDEM dos indicadores, não o "
-        "valor absoluto do score."
+        "O ranking testa a melhor entre várias defasagens e médias móveis de "
+        "cada indicador, e as linhas de evidência se sobrepõem entre si. Isso "
+        "favorece encontrar associação, então leia a ordem dos indicadores e "
+        "não o valor absoluto do score."
     )
     if result.ml and not (
         np.isfinite(result.ml.r2_oos) and result.ml.r2_oos >= ML_MIN_R2
@@ -220,9 +294,9 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
     grupos = scores.head(top)["parametro"].map(base_indicator)
     if grupos.duplicated().any():
         rep.cautions.append(
-            "Várias métricas do mesmo indicador aparecem no topo (ex.: máximo "
-            "e P90 da mesma variável) — elas descrevem o MESMO fenômeno físico "
-            "e dividem a 'culpa' entre si."
+            "Várias métricas do mesmo indicador aparecem no topo, como o pico "
+            "e o teto da mesma variável. Elas descrevem o mesmo fenômeno "
+            "físico e dividem a culpa entre si."
         )
 
     # tabela amigável
@@ -238,7 +312,7 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         "indefinida": "direção incerta",
     })
     tab["quando impacta"] = tab["melhor_transformacao"].map(
-        lambda label: _lag_phrase(str(label), step)
+        lambda label: _lag_short(str(label), step)
     )
     cols = ["indicador", "o que foi medido", "score", "veredito",
             "como impacta", "quando impacta", "confianca"]
@@ -246,9 +320,9 @@ def build_managerial_report(result: AnalysisResult, top: int = 8) -> ManagerialR
         cols.append("efeito")
         if tab["efeito"].astype(str).str.startswith("indireto").any():
             rep.cautions.append(
-                "Efeito 'indireto (via X)' é um INDÍCIO de mediação: a "
-                "associação com o alvo enfraquece quando se desconta X "
-                "(correlação parcial). Priorize investigar X."
+                "Quando a coluna de efeito aponta um indicador, é sinal de "
+                "que a associação com o alvo enfraquece ao descontar aquele "
+                "indicador. Vale investigá-lo primeiro."
             )
     rep.ranking_table = tab[cols].rename(columns={"confianca": "confiança"})
     return rep
