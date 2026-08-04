@@ -20,8 +20,9 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .aggregation import METRIC_FRIENDLY, base_indicator, metric_of
+from .aggregation import base_indicator
 from .features import feature_label, single_feature
+from .phrasing import friendly_name, measured_on, measured_short, time_step
 from .pipeline import AnalysisResult
 
 # |2·percentil − 1|: 0 = mediana, 1 = extremo
@@ -50,11 +51,11 @@ def _fmt(v: float, nd: int = 4) -> str:
 
 
 def _friendly(param: str) -> str:
-    base = base_indicator(param)
-    metric = metric_of(param)
-    if metric is None:
-        return f"'{base}'"
-    return f"'{base}' — {METRIC_FRIENDLY.get(metric, metric)}"
+    """Sujeito pronto para a frase: "o teto de temp", não "'temp' — ...".
+
+    O vocabulário é o mesmo do ranking; ver ``phrasing.friendly_name``.
+    """
+    return friendly_name(param)
 
 
 def _uses_future(index: pd.Index, label) -> bool:
@@ -105,6 +106,10 @@ def diagnose_day(result: AnalysisResult, label, top: int = 10) -> DayDiagnosis:
         diag.cautions.append("Dia indisponível na grade analisada.")
         return diag
 
+    # passo de tempo da grade: é o que permite citar "3 horas antes" em vez
+    # de "lag 3" na versão temporal avaliada de cada indicador
+    step, _ = time_step(df.index)
+
     y = df[result.target]
     diag.n_history = int(y.notna().sum())
     diag.target_value = float(y.loc[label]) if np.isfinite(
@@ -135,35 +140,36 @@ def diagnose_day(result: AnalysisResult, label, top: int = 10) -> DayDiagnosis:
         if label not in serie.index:
             continue
         valor = serie.loc[label]
+        lido_em = measured_short(feature_label(best_feat), step)
         if not np.isfinite(valor):
             linhas.append({
                 "indicador": _friendly(param), "parametro": param,
                 "valor no dia": np.nan, "percentil no dia": np.nan,
-                "típico (mediana)": float(np.nanmedian(serie)),
+                "valor típico": float(np.nanmedian(serie)),
                 "desvio": "sem dados no dia", "empurrão esperado": "—",
                 "score histórico": float(row["score"]), "score do dia": 0.0,
-                "versão avaliada": feature_label(best_feat),
+                "versão avaliada": lido_em, "transformacao": feature_label(best_feat),
             })
             continue
         pct = _percentile_of(serie, float(valor))
         atip = abs(2.0 * pct / 100.0 - 1.0) if np.isfinite(pct) else 0.0
         dev_side = 1 if pct >= 50 else -1
         direcao = int(row.get("direcao", 0))
-        if direcao == 0:
-            push = ("fora da faixa habitual (efeito não-monotônico)"
-                    if atip >= ATYPICAL_MILD else "—")
+        if atip < ATYPICAL_MILD:
+            push = "—"
+        elif direcao == 0:
+            push = "fora da faixa habitual"
         else:
-            sobe = direcao * dev_side > 0
-            push = ("alvo para CIMA" if sobe else "alvo para BAIXO") \
-                if atip >= ATYPICAL_MILD else "—"
+            push = ("empurra para cima" if direcao * dev_side > 0
+                    else "empurra para baixo")
         linhas.append({
             "indicador": _friendly(param), "parametro": param,
             "valor no dia": float(valor), "percentil no dia": round(pct, 1),
-            "típico (mediana)": float(np.nanmedian(serie)),
+            "valor típico": float(np.nanmedian(serie)),
             "desvio": _deviation_label(pct), "empurrão esperado": push,
             "score histórico": float(row["score"]),
             "score do dia": round(float(row["score"]) * atip, 1),
-            "versão avaliada": feature_label(best_feat),
+            "versão avaliada": lido_em, "transformacao": feature_label(best_feat),
         })
 
     tab = pd.DataFrame(linhas)
@@ -174,56 +180,67 @@ def diagnose_day(result: AnalysisResult, label, top: int = 10) -> DayDiagnosis:
     diag.rows = tab
 
     # ---- frases gerenciais -------------------------------------------------
-    alvo_txt = _deviation_label(diag.target_pct)
+    alvo = result.target
     if np.isfinite(diag.target_pct):
         diag.findings.append(
-            f"O alvo '{result.target}' neste dia valeu "
-            f"{_fmt(diag.target_value)} — percentil {diag.target_pct:.0f} do "
-            f"histórico ({alvo_txt})."
+            f"Neste dia {alvo} valeu {_fmt(diag.target_value)}, "
+            f"{_deviation_label(diag.target_pct)}: "
+            f"{diag.target_pct:.0f}% dos dias do histórico ficaram abaixo "
+            f"desse valor."
         )
     contribuintes = tab[(tab["score do dia"] >= 15)
                         & (tab["empurrão esperado"] != "—")] if not tab.empty \
         else pd.DataFrame()
     if contribuintes.empty:
         diag.findings.append(
-            "Nenhum dos fatores historicamente relevantes esteve fora do "
-            "padrão neste dia — o resultado pode vir de variação comum do "
-            "processo ou de fatores não medidos."
+            "Nenhum dos fatores historicamente relevantes saiu do padrão "
+            "neste dia. O resultado pode vir da variação comum do processo ou "
+            "de fatores que não estão na planilha."
         )
     else:
         for _, c in contribuintes.head(5).iterrows():
-            extra = ""
-            if str(c["versão avaliada"]).startswith(("lag", "média")):
-                extra = f" (versão avaliada: {c['versão avaliada']})"
             push = str(c["empurrão esperado"])
-            if push.startswith("alvo"):
-                conclusao = f"provável contribuinte para empurrar o {push}"
+            if push.startswith("empurra"):
+                lado = "cima" if push.endswith("cima") else "baixo"
+                # "o resultado" e não o nome do alvo de novo: ele já apareceu
+                # na mesma frase, e repetir trava a leitura
+                conclusao = (
+                    f"é provável contribuinte para empurrar o resultado para {lado}"
+                )
             else:
-                conclusao = f"provável contribuinte — esteve {push}"
+                conclusao = (
+                    "é provável contribuinte, por ter saído da faixa habitual"
+                )
+            # A frase começa com "No dia" e não com o nome do indicador: o
+            # nome precisaria de maiúscula inicial, e maiúscula em nome de
+            # coluna é corrupção de dado — 'driver' viraria 'Driver'.
+            # Duas frases: o que aconteceu no dia, e por que isso importa.
             diag.findings.append(
-                f"{c['indicador']}: {_fmt(c['valor no dia'])} no dia — "
-                f"percentil {c['percentil no dia']:.0f} do histórico, "
-                f"{c['desvio']}{extra}. Historicamente move o alvo "
-                f"(score {c['score histórico']:.0f}/100) → {conclusao}."
+                f"No dia, {c['indicador']} ficou em "
+                f"{_fmt(c['valor no dia'])}, {c['desvio']}"
+                f"{measured_on(str(c['transformacao']), step)}. "
+                f"Historicamente move {alvo} com score "
+                f"{c['score histórico']:.0f} de 100, então {conclusao}."
             )
     diag.cautions.append(
-        "O diagnóstico do dia cruza o ranking histórico com a atipicidade do "
-        "dia — é um indício priorizado para investigação, não prova causal."
+        "O diagnóstico cruza o ranking histórico com o quanto cada indicador "
+        "fugiu do normal neste dia. É um indício priorizado para "
+        "investigação, não prova de causa."
     )
     diag.cautions.append(
-        "O 'score do dia' é *relevância histórica × atipicidade*. Ele NÃO "
-        "mede quanto cada indicador contribuiu para o resultado: não há "
-        "cálculo contrafactual (\"o que teria acontecido se X estivesse "
-        "normal\"), não há repartição da variação do alvo e não há intervalo "
-        "de confiança. Serve para responder \"o que investigar primeiro?\", "
-        "não \"quem causou?\"."
+        "O score do dia multiplica a relevância histórica pela atipicidade, e "
+        "não mede quanto cada indicador contribuiu para o resultado. Ele não "
+        "calcula o que teria acontecido se o indicador estivesse normal, não "
+        "reparte a variação do alvo entre os indicadores e não traz intervalo "
+        "de confiança. Responde o que investigar primeiro, não quem causou."
     )
     if _uses_future(result.df.index, label):
         diag.cautions.append(
-            "Este dia NÃO é o último da base: tanto o ranking histórico quanto "
-            "o percentil do dia foram calculados sobre a série inteira, "
-            "incluindo dias POSTERIORES a ele. O diagnóstico usa, portanto, "
-            "informação que não existia naquela data — para reconstituir uma "
-            "decisão tomada no dia, refaça a análise com a base cortada ali."
+            "Este dia não é o último da base. Tanto o ranking histórico "
+            "quanto o percentil do dia foram calculados sobre a série "
+            "inteira, incluindo dias posteriores a ele, então o diagnóstico "
+            "usa informação que não existia naquela data. Para reconstituir "
+            "uma decisão tomada no dia, refaça a análise com a base cortada "
+            "ali."
         )
     return diag

@@ -83,11 +83,11 @@ def test_diagnostico_do_dia_aponta_contribuinte_extremo():
     top = diag.rows.iloc[0]
     assert "driver" in top["indicador"]
     assert top["percentil no dia"] >= 99
-    assert top["empurrão esperado"] == "alvo para CIMA"
+    assert top["empurrão esperado"] == "empurra para cima"
     assert top["score do dia"] > 30
     # frases citam o contribuinte e a cautela está presente
     assert any("driver" in f for f in diag.findings)
-    assert any("não prova causal" in c for c in diag.cautions)
+    assert any("não prova de causa" in c for c in diag.cautions)
     # dia típico: nada deve ser apontado com empurrão
     meio = df.index[60]
     diag2 = diagnose_day(res, meio)

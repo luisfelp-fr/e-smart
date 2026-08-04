@@ -368,7 +368,9 @@ def _render_day_diagnosis(result) -> None:
     if diag.rows is not None and not diag.rows.empty:
         fig_diag = pp.fig_day_diagnosis(diag.rows, _fmt_day(dia))
         st.plotly_chart(fig_diag, use_container_width=True)
-        tabela = diag.rows.drop(columns=["parametro"])
+        # "parametro" e "transformacao" são de uso interno das frases
+        tabela = diag.rows.drop(columns=["parametro", "transformacao"],
+                                errors="ignore")
         st.dataframe(tabela, use_container_width=True)
     else:
         fig_diag, tabela = None, None
