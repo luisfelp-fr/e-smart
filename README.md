@@ -12,7 +12,8 @@ streamlit run app/streamlit_app.py
 
 ## Entrada de dados
 
-- Planilha **CSV ou Excel** (`.xlsx/.xls/.xlsm/.ods`), carregada na barra lateral.
+- Planilha **CSV ou Excel** (`.xlsx/.xlsm/.ods`), carregada na barra lateral.
+  O formato antigo `.xls` vem **desabilitado** — veja *Segurança do upload*.
 - O upload é feito **uma única vez**: a planilha vira a **base compartilhada de
   todos os módulos** (lida com cache, sem re-parse a cada interação) — em cada
   módulo você só seleciona a **aba** e o **indicador**.
@@ -196,6 +197,39 @@ python benchmarks/bench_module2.py 10000 40 # uma grade específica
 > estritamente sequenciais. Para dezenas de pessoas, veja
 > [`docs/PARECER_ESCALABILIDADE.md`](docs/PARECER_ESCALABILIDADE.md) — com o
 > dimensionamento e os caminhos de hospedagem.
+
+### Segurança do upload e do download
+
+O app recebe planilha de quem alcançar a URL e devolve arquivo para download.
+As duas pontas têm defesa:
+
+**Na entrada** (`shared/safety.py`, chamado em `read_raw`): antes de qualquer
+parser tocar no arquivo, o conteúdo é conferido contra a extensão pela
+assinatura (um `.xlsx` precisa começar com `PK\x03\x04`), e zip que declara
+expandir acima de 500 MB ou trazer mais de 5.000 arquivos internos é recusado
+— é a forma da bomba de descompressão, minúscula em disco e enorme na memória.
+
+O `.xls` legado vem **desligado**: é lido pelo `xlrd`, a biblioteca com o
+histórico de vulnerabilidades mais pesado da pilha, e quase tudo hoje sai em
+`.xlsx`. Quem depender dele religa com `ESMART_ALLOW_XLS=1`; quem não
+depender pode remover `xlrd` do `requirements.txt` e apagar a dependência.
+
+**Na saída**: célula de texto começando com `=`, `+`, `-`, `@`, tab ou CR é
+executada como fórmula ao abrir no Excel — e o conteúdo vem da planilha
+enviada. Os arquivos exportados recebem prefixo `'` nessas células, o que
+neutraliza sem perder o dado. O HTML do relatório escapa todo texto do
+usuário, porque nome de coluna vira conteúdo da página e o arquivo baixado
+circula por e-mail depois.
+
+As versões das bibliotecas estão **fixadas** no `requirements.txt`, e o
+`.github/dependabot.yml` abre PR semanal com as atualizações — os leitores de
+planilha num grupo próprio, para serem revisados com atenção.
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `ESMART_ALLOW_XLS` | (desligado) | reabilita o formato `.xls` |
+| `ESMART_MAX_UNCOMPRESSED_MB` | 500 | teto de expansão declarada do zip |
+| `ESMART_MAX_ZIP_ENTRIES` | 5000 | teto de arquivos dentro do zip |
 
 ### Acesso e dados
 

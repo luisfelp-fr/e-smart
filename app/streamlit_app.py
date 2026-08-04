@@ -24,6 +24,7 @@ from page_module1 import render_module1  # noqa: E402
 from page_module2 import render_module2  # noqa: E402
 from report_builder import render_report_page  # noqa: E402
 from shared.limits import limits_summary, queue_note  # noqa: E402
+from shared.parsing import UPLOAD_EXTS  # noqa: E402
 from ui_components import save_upload  # noqa: E402
 
 st.set_page_config(
@@ -40,7 +41,7 @@ def main() -> None:
 
         uploaded = st.file_uploader(
             "Planilha de dados (CSV ou Excel)",
-            type=["csv", "txt", "xlsx", "xls", "xlsm", "ods"],
+            type=UPLOAD_EXTS,
             help="Primeira coluna com data/hora (opcional — sem ela, usamos "
                  "a ordem das linhas). Números com vírgula decimal são "
                  "aceitos. Excel pode ter várias abas, cada uma com uma "

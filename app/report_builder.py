@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import datetime as dt
+import html
 
 import streamlit as st
 
 from shared.limits import Busy, queue_note, render_slot
 from shared.pdf_export import build_pdf
+
+
+def esc(value) -> str:
+    """Escapa texto que vai para dentro do HTML do relatório.
+
+    Títulos, nomes de tabela e textos de análise carregam nomes de coluna
+    vindos da planilha enviada. Uma coluna chamada
+    ``<img src=x onerror=...>`` viraria script executando no preview e no
+    HTML baixado — que é um arquivo que circula por e-mail depois.
+    ``DataFrame.to_html`` já escapa as células por conta própria; o que
+    faltava era tudo que é interpolado em volta delas.
+    """
+    return html.escape(str(value), quote=True)
 
 _CSS = """
 body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -56,12 +70,13 @@ def build_html(items: list[dict]) -> str:
     first_fig = True
     for it in items:
         parts.append(
-            f"<h2>{it['title']}<span class='item-mod'>{it['module']}</span></h2>"
+            f"<h2>{esc(it['title'])}"
+            f"<span class='item-mod'>{esc(it['module'])}</span></h2>"
         )
         for text in it.get("texts", []):
-            parts.append(f"<p class='texto'>{text}</p>")
+            parts.append(f"<p class='texto'>{esc(text)}</p>")
         for name, table in it.get("tables", {}).items():
-            parts.append(f"<p class='texto'><b>{name}</b></p>")
+            parts.append(f"<p class='texto'><b>{esc(name)}</b></p>")
             parts.append(table.to_html(border=0, na_rep="—",
                                        float_format=lambda v: f"{v:.3f}"))
         for _, fig in it.get("figures", {}).items():
@@ -87,12 +102,12 @@ def build_html(items: list[dict]) -> str:
             "recomendados pela regra de cada caso.</p>"
         )
         linhas = "".join(
-            f"<tr><td>{r['indicador']}</td>"
-            f"<td>{situ_txt.get(r['situacao'], r['situacao'])}</td>"
+            f"<tr><td>{esc(r['indicador'])}</td>"
+            f"<td>{esc(situ_txt.get(r['situacao'], r['situacao']))}</td>"
             f"<td>{_fmt_or_dash(r['lsl'])} · {_fmt_or_dash(r['usl'])}</td>"
             f"<td><b>{_fmt_or_dash(r['rec_lsl'])} · "
             f"{_fmt_or_dash(r['rec_usl'])}</b></td>"
-            f"<td>{r['metodo']}</td></tr>"
+            f"<td>{esc(r['metodo'])}</td></tr>"
             for r in reviews
         )
         parts.append(

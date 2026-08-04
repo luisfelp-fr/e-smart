@@ -11,10 +11,32 @@ import os
 
 import pandas as pd
 
-EXCEL_EXTS = {".xlsx", ".xls", ".xlsm", ".ods"}
+from .safety import validate_upload
+
+# O .xls é o formato legado, lido pelo xlrd — a biblioteca de parsing com o
+# histórico de vulnerabilidades mais pesado da pilha. Como quase tudo hoje
+# sai em .xlsx, ele fica DESLIGADO por padrão: é uma superfície inteira
+# removida sem custo. Quem realmente depende de .xls religa com
+# ESMART_ALLOW_XLS=1, e a mensagem de erro diz isso a quem esbarrar.
+ALLOW_XLS = os.environ.get("ESMART_ALLOW_XLS", "").strip().lower() in {
+    "1", "true", "sim", "yes", "on",
+}
+
+EXCEL_EXTS = {".xlsx", ".xlsm", ".ods"} | ({".xls"} if ALLOW_XLS else set())
+
+UPLOAD_EXTS = ["csv", "txt", "xlsx", "xlsm", "ods"] + (["xls"] if ALLOW_XLS else [])
 
 # leitor que o pandas usa por extensão — para a mensagem de erro amigável
 _ENGINE_BY_EXT = {".xls": "xlrd", ".ods": "odfpy"}
+
+
+def _reject_if_disabled(ext: str) -> None:
+    if ext == ".xls" and not ALLOW_XLS:
+        raise ValueError(
+            "Arquivos .xls (formato antigo do Excel) não são aceitos por "
+            "segurança: o leitor desse formato acumula vulnerabilidades "
+            "conhecidas. Abra a planilha no Excel e salve como .xlsx ou .csv."
+        )
 
 
 def _read_excel(path: str, sheet_name):
@@ -79,8 +101,14 @@ def _read_csv(path: str, sep: str) -> pd.DataFrame:
 
 
 def read_raw(path: str, sep: str | None = None, sheet: int | str = 0) -> pd.DataFrame:
-    """Lê CSV ou Excel; para CSV, sep=None detecta ';', tab ou ','."""
+    """Lê CSV ou Excel; para CSV, sep=None detecta ';', tab ou ','.
+
+    Ponto único de entrada de arquivo do app: é aqui que o conteúdo é
+    validado antes de qualquer parser tocá-lo (ver ``shared.safety``).
+    """
     ext = os.path.splitext(path)[1].lower()
+    _reject_if_disabled(ext)
+    validate_upload(path)
     if ext in EXCEL_EXTS:
         return _read_excel(path, sheet_name=sheet)
     if sep is None:
@@ -95,6 +123,8 @@ def read_all_sheets(path: str, sep: str | None = None) -> dict[str, pd.DataFrame
     do arquivo sem extensão.
     """
     ext = os.path.splitext(path)[1].lower()
+    _reject_if_disabled(ext)
+    validate_upload(path)
     if ext in EXCEL_EXTS:
         sheets = _read_excel(path, sheet_name=None)
         return {str(k): v for k, v in sheets.items()}

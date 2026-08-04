@@ -240,12 +240,17 @@ def now_str() -> str:
 # --------------------------------------------------------------------------- #
 def df_to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     """Serializa um dicionário {nome_aba: DataFrame} em bytes de um .xlsx."""
+    from shared.safety import neutralize_formulas
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, data in sheets.items():
             safe = str(sheet_name)[:31]  # limite de nome de aba do Excel
             if isinstance(data, pd.DataFrame):
-                data.to_excel(writer, sheet_name=safe, index=True)
+                # conteúdo vindo da planilha do usuário: célula começando com
+                # "=" seria executada como fórmula por quem abrisse o arquivo
+                neutralize_formulas(data).to_excel(
+                    writer, sheet_name=safe, index=True)
             else:
                 pd.DataFrame({"info": [str(data)]}).to_excel(
                     writer, sheet_name=safe, index=False

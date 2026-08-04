@@ -1,15 +1,42 @@
-pandas>=2.0
-numpy>=1.24
-scipy>=1.10
-scikit-learn>=1.3
-statsmodels>=0.14
-matplotlib>=3.7
-jinja2>=3.1
-openpyxl>=3.1
-xlrd>=2.0
-odfpy>=1.4
-streamlit>=1.36
-plotly>=5.20
-kaleido>=0.2
-fpdf2>=2.7
-tzdata>=2024.1
+# Versões FIXAS de propósito.
+#
+# Dois motivos:
+#
+# 1. Segurança. openpyxl, xlrd e odfpy leem bytes que qualquer pessoa envia
+#    pelo upload, e é onde as vulnerabilidades desta pilha aparecem. Com
+#    ">=" o ambiente instalava o que estivesse disponível no dia do deploy,
+#    e ninguém sabia qual versão estava rodando quando saísse um CVE.
+# 2. Reprodutibilidade. O relatório carimba a versão do algoritmo (commit),
+#    o que só reproduz o resultado se as bibliotecas também forem as mesmas.
+#
+# Pino sem atualização vira dívida: .github/dependabot.yml abre PR semanal
+# com as versões novas, e aí atualizar é decisão consciente com CI para
+# conferir, em vez de acontecer sozinho num deploy qualquer.
+#
+# Para atualizar e regravar este arquivo:
+#     pip install -U -r requirements.txt && pip freeze > requirements.txt
+# (revise o resultado: o freeze inclui dependências transitivas)
+
+pandas==3.0.5
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.0
+statsmodels==0.14.6
+matplotlib==3.11.1
+jinja2==3.1.6
+streamlit==1.60.0
+plotly==6.9.0
+kaleido==1.2.0
+fpdf2==2.8.7
+tzdata==2026.3
+
+# --- leitores de planilha: a superfície de ataque do upload ----------------
+# openpyxl lê .xlsx/.xlsm; odfpy lê .ods.
+openpyxl==3.1.5
+odfpy==1.4.1
+
+# xlrd lê o .xls legado, DESLIGADO por padrão em shared/parsing.py — é o
+# leitor com o histórico de CVE mais pesado. Fica instalado para quem
+# precisar religar com ESMART_ALLOW_XLS=1; se ninguém usar .xls, remover
+# esta linha elimina a dependência inteira.
+xlrd==2.0.2

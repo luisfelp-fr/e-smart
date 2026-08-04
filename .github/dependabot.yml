@@ -1,0 +1,38 @@
+# Mantém as versões fixadas do requirements.txt sob vigilância.
+#
+# Fixar versão protege contra atualização surpresa, mas congela também as
+# correções de segurança: sem isto, um CVE em openpyxl ficaria no ar até
+# alguém reparar por acaso. O Dependabot abre PR quando sai versão nova, e a
+# atualização vira uma decisão com diff para revisar.
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Os leitores de planilha processam bytes não confiáveis do upload:
+      # ficam num grupo próprio para serem revisados com atenção, e não
+      # perdidos no meio de um PR com dez pacotes.
+      leitores-de-planilha:
+        patterns:
+          - openpyxl
+          - xlrd
+          - odfpy
+      demais:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - openpyxl
+          - xlrd
+          - odfpy
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

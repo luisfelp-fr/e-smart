@@ -20,13 +20,17 @@ from analytics.utils.helpers import numeric_cols, make_report_item, add_to_repor
 from analytics.utils.plotting import boxplot, outlier_scatter
 from analytics.utils.interpretation import interpret_outliers
 from analytics.utils.glossary import GLOSSARY
+from shared.safety import neutralize_formulas
 
 
 def _to_excel_bytes(df: pd.DataFrame) -> bytes:
     """Serializa um DataFrame em bytes de um .xlsx (sem coluna de índice)."""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Sem outliers", index=False)
+        # o conteúdo vem da planilha enviada: célula começando com "=" seria
+        # executada como fórmula por quem abrisse este arquivo
+        neutralize_formulas(df).to_excel(
+            writer, sheet_name="Sem outliers", index=False)
     return buffer.getvalue()
 
 
@@ -184,7 +188,8 @@ def render(state) -> None:
         cache = st.session_state.get("ax_out_export")
         if not cache or cache[0] != sig:
             cache = (sig, _to_excel_bytes(cleaned),
-                     cleaned.to_csv(index=False).encode("utf-8-sig"))
+                     neutralize_formulas(cleaned)
+                     .to_csv(index=False).encode("utf-8-sig"))
             st.session_state["ax_out_export"] = cache
         _, xlsx_bytes, csv_bytes = cache
 
